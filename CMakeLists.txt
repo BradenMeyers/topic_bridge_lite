@@ -119,6 +119,11 @@ install(DIRECTORY
 
 install(PROGRAMS
   scripts/dummy_publisher.py
+  scripts/network_interface_base.py
+  scripts/bluetooth_manager.py
+  scripts/bluetooth_bridge.py
+  scripts/radio_manager.py
+  scripts/radio_bridge.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
