@@ -81,8 +81,10 @@ class BluetoothTransportNode(Node):
         self._inbound_pub = self.create_publisher(BridgeFrame, inbound, 10)
         self._status_pub  = self.create_publisher(InterfaceStatus, status, 10)
 
+        self._last_reconnect = 0.0
+
         self.create_timer(0.1, self._publish_status)
-        self.create_timer(0.5, self._check_health)
+        self.create_timer(5.0, self._check_health)
 
         self._send_thread = threading.Thread(
             target=self._send_thread_fn, daemon=True, name="bt_send"
@@ -205,7 +207,10 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

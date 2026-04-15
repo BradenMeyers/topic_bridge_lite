@@ -152,7 +152,7 @@ class BluetoothDevice(NetworkInterface):
             self._rx_thread.start()
             return True
         except OSError as exc:
-            self._log.error(f"Bluetooth client connect failed: {exc}")
+            self._log.warning(f"Bluetooth client connect failed: {exc}")
             self._failed = True
             return False
 
