@@ -16,7 +16,7 @@ topics:
     type:     geometry_msgs/msg/Vector3Stamped
     id:       0
     mode:     rx
-    # src_addr: 0x01   # optional: filter by source address when use_addressing is enabled
+    src_addr: 0x01   # optional: filter by source address when use_addressing is enabled
 
   # Example: send /cmd_vel with high priority
   # - input:    /cmd_vel

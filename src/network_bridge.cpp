@@ -86,7 +86,7 @@ void EncoderNode::load_topic_config(const std::string & path)
       this->get_logger(), "Failed to load config_file '%s': %s", path.c_str(), e.what());
     return;
   }
-  src_addr_ = root["src_addr"].as<uint8_t>(0);
+  src_addr_ = root["node_addr"].as<uint8_t>(0);
 
   auto topics_node = root["topics"];
   if (!topics_node || !topics_node.IsSequence()) {
@@ -105,9 +105,10 @@ void EncoderNode::load_topic_config(const std::string & path)
     cfg.queue_max = entry["queue_max"].as<int>(8);
     cfg.zstd_level = entry["zstd_level"].as<int>(3);
     cfg.publish_stale_data = entry["publish_stale_data"].as<bool>(false);
-    cfg.dst_addr = static_cast<uint8_t>(entry["dst_addr"].as<int>(0x00) & 0xFF);
-    cfg.src_addr = static_cast<uint8_t>(entry["src_addr"].as<int>(0x00) & 0xFF);
+    cfg.dst_addr = entry["dst_addr"].as<uint8_t>(0);
+    cfg.src_addr = entry["src_addr"].as<uint8_t>(0);
 
+    // TODO - dont do this as a string but a number priority. Decide how priorities are handled.
     std::string prio_str = entry["priority"].as<std::string>("medium");
     if (prio_str == "low") {
       cfg.priority = network_bridge::Priority::LOW;
@@ -137,62 +138,68 @@ void EncoderNode::load_topic_config(const std::string & path)
       continue;
     }
 
-    if (cfg.mode == "tx") {
-      if (cfg.input.empty()) {
-        RCLCPP_ERROR(this->get_logger(), "TX id=%u has no 'input' — skipping", cfg.id);
-        continue;
-      }
+    bool do_tx = (cfg.mode == "tx" || cfg.mode == "duplex");
+    bool do_rx = (cfg.mode == "rx" || cfg.mode == "duplex");
 
-      std::shared_ptr<SubscriptionManager> mgr;
-      if (cfg.is_tf) {
-        auto tf_mgr = std::make_shared<SubscriptionManagerTF>(
-          shared_from_this(), cfg.input, "",
-          cfg.zstd_level, cfg.publish_stale_data, cfg.is_static_tf);
-        if (!cfg.tf_include.empty()) {tf_mgr->set_include_pattern(cfg.tf_include);}
-        if (!cfg.tf_exclude.empty()) {tf_mgr->set_exclude_pattern(cfg.tf_exclude);}
-        tf_mgr->setup_subscription();
-        mgr = tf_mgr;
-      } else {
-        mgr = std::make_shared<SubscriptionManager>(
-          shared_from_this(), cfg.input, "",
-          cfg.zstd_level, cfg.publish_stale_data);
-        mgr->setup_subscription();
-      }
-
-      network_bridge::TxQueue tq;
-      tq.config = cfg;
-      tq.sub_mgr = mgr;
-      tx_queues_.push_back(std::move(tq));
-
-      int ms = static_cast<int>(1000.0f / cfg.rate);
-      size_t idx = tx_queues_.size() - 1;
-      timers_.push_back(this->create_wall_timer(
-          std::chrono::milliseconds(ms),
-          [this, idx]() {encode_and_publish(tx_queues_[idx]);}));
-
-      RCLCPP_INFO(
-        this->get_logger(),
-        "TX id=%u dst=0x%02X  %s [%s]  %.1fHz  pri=%s  drop=%s  q=%d",
-        cfg.id, cfg.dst_addr, cfg.input.c_str(), cfg.type.c_str(), cfg.rate,
-        prio_str.c_str(), drop_str.c_str(), cfg.queue_max);
-
-    } else if (cfg.mode == "rx") {
-      if (cfg.output.empty()) {
-        RCLCPP_ERROR(this->get_logger(), "RX id=%u has no 'output' — skipping", cfg.id);
-        continue;
-      }
-      auto key = std::make_pair(cfg.src_addr, cfg.id);
-      network_bridge::RxEntry rx;
-      rx.config = cfg;
-      rx_registry_[key] = std::move(rx);
-
-      RCLCPP_INFO(
-        this->get_logger(),
-        "RX id=%u src=0x%02X  → %s [%s]",
-        cfg.id, cfg.src_addr, cfg.output.c_str(), cfg.type.c_str());
-    } else {
+    if (!do_tx && !do_rx) {
       RCLCPP_ERROR(
         this->get_logger(), "Unknown mode '%s' for id=%u", cfg.mode.c_str(), cfg.id);
+      continue;
+    }
+
+    if (do_tx) {
+      if (cfg.input.empty()) {
+        RCLCPP_ERROR(this->get_logger(), "TX id=%u has no 'input' — skipping TX", cfg.id);
+      } else {
+        std::shared_ptr<SubscriptionManager> mgr;
+        if (cfg.is_tf) {
+          auto tf_mgr = std::make_shared<SubscriptionManagerTF>(
+            shared_from_this(), cfg.input, "",
+            cfg.zstd_level, cfg.publish_stale_data, cfg.is_static_tf);
+          if (!cfg.tf_include.empty()) {tf_mgr->set_include_pattern(cfg.tf_include);}
+          if (!cfg.tf_exclude.empty()) {tf_mgr->set_exclude_pattern(cfg.tf_exclude);}
+          tf_mgr->setup_subscription();
+          mgr = tf_mgr;
+        } else {
+          mgr = std::make_shared<SubscriptionManager>(
+            shared_from_this(), cfg.input, "",
+            cfg.zstd_level, cfg.publish_stale_data);
+          mgr->setup_subscription();
+        }
+
+        network_bridge::TxQueue tq;
+        tq.config = cfg;
+        tq.sub_mgr = mgr;
+        tx_queues_.push_back(std::move(tq));
+
+        int ms = static_cast<int>(1000.0f / cfg.rate);
+        size_t idx = tx_queues_.size() - 1;
+        timers_.push_back(this->create_wall_timer(
+            std::chrono::milliseconds(ms),
+            [this, idx]() {encode_and_publish(tx_queues_[idx]);}));
+
+        RCLCPP_INFO(
+          this->get_logger(),
+          "TX id=%u dst=0x%02X  %s [%s]  %.1fHz  pri=%s  drop=%s  q=%d",
+          cfg.id, cfg.dst_addr, cfg.input.c_str(), cfg.type.c_str(), cfg.rate,
+          prio_str.c_str(), drop_str.c_str(), cfg.queue_max);
+      }
+    }
+
+    if (do_rx) {
+      if (cfg.output.empty()) {
+        RCLCPP_ERROR(this->get_logger(), "RX id=%u has no 'output' — skipping RX", cfg.id);
+      } else {
+        auto key = std::make_pair(cfg.src_addr, cfg.id);
+        network_bridge::RxEntry rx;
+        rx.config = cfg;
+        rx_registry_[key] = std::move(rx);
+
+        RCLCPP_INFO(
+          this->get_logger(),
+          "RX id=%u src=0x%02X  → %s [%s]",
+          cfg.id, cfg.src_addr, cfg.output.c_str(), cfg.type.c_str());
+      }
     }
   }
 }
@@ -270,8 +277,16 @@ void EncoderNode::on_inbound_frame(const network_bridge::msg::BridgeFrame::Share
 
   size_t offset = 0;
   uint8_t src_addr = 0x00;
+  // TODO maybe we always force addressing but the lower layer can 
+  // pull off the header and add it back on on the other side
   if (use_addressing_) {
-    // payload[0] = dst_addr (our address, not used for routing here)
+    uint8_t dst_addr = msg->payload[0];
+    if (dst_addr != src_addr_ && dst_addr != 0x00) {
+      RCLCPP_DEBUG(
+        this->get_logger(), "Frame for dst_addr=0x%02X, not us (0x%02X) — dropping",
+        dst_addr, src_addr_);
+      return;
+    }
     src_addr = msg->payload[1];
     offset = 2;
   }
@@ -354,6 +369,7 @@ void EncoderNode::decompress(std::span<const uint8_t> data, std::vector<uint8_t>
 
 network_bridge::Priority EncoderNode::min_publishable_priority() const
 {
+  // TODO look at this to see if this is what i actually want to do. Maybe start dropping queues. 
   switch (medium_state_) {
     case 1: return network_bridge::Priority::LOW;
     case 2: return network_bridge::Priority::MEDIUM;

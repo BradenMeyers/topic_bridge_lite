@@ -49,7 +49,6 @@ void TransportNode::load_parameters()
   this->declare_parameter("outbound_topic", outbound_topic_);
   this->declare_parameter("inbound_topic", inbound_topic_);
   this->declare_parameter("status_topic", status_topic_);
-
   int queue_max_int, window_ms_int;
   this->get_parameter("network_interface", network_interface_name_);
   this->get_parameter("queue_max", queue_max_int);
@@ -134,6 +133,20 @@ void TransportNode::check_network_health()
 
 void TransportNode::on_outbound_frame(const network_bridge::msg::BridgeFrame::SharedPtr msg)
 {
+  auto it = rx_last_seq_.find(msg->topic_id);
+  if (it != rx_last_seq_.end()) {
+    uint8_t expected = static_cast<uint8_t>(it->second + 1);
+    if (msg->sequence != expected) {
+      uint32_t gap = static_cast<uint8_t>(msg->sequence - expected);
+      gaps_window_.fetch_add(gap, std::memory_order_relaxed);
+      RCLCPP_WARN(
+        this->get_logger(),
+        "Seq gap on topic_id=%u: expected %u got %u (%u missing)",
+        msg->topic_id, expected, msg->sequence, gap);
+    }
+  }
+  rx_last_seq_[msg->topic_id] = msg->sequence;
+
   std::lock_guard<std::mutex> lock(queue_mutex_);
   if (send_queue_.size() >= queue_max_) {
     dropped_window_.fetch_add(1, std::memory_order_relaxed);
@@ -217,7 +230,9 @@ void TransportNode::publish_status()
   msg.header.stamp = this->now();
   msg.queue_depth = static_cast<uint8_t>(std::min(depth, size_t(255)));
   msg.queue_max = queue_max_;
-  msg.dropped_last_window = dropped_window_.exchange(0, std::memory_order_relaxed);
+  msg.dropped_last_window  = dropped_window_.exchange(0, std::memory_order_relaxed);
+  msg.seq_gaps_last_window = static_cast<uint8_t>(
+    std::min(gaps_window_.exchange(0, std::memory_order_relaxed), 255u));
   msg.medium_state = compute_medium_state();
   msg.bytes_sent_last_window = bytes_sent_window_.exchange(0, std::memory_order_relaxed);
   msg.window_ms = window_ms_;

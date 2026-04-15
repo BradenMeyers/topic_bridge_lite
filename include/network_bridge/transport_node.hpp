@@ -3,6 +3,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -79,6 +80,9 @@ private:
   std::string inbound_topic_{"bridge_frame_in"};
   std::string status_topic_{"interface_status"};
 
+  // Last seen sequence per topic_id — for gap detection on outbound frames.
+  std::map<uint8_t, uint8_t> rx_last_seq_;
+
   // ── bounded send queue ────────────────────────────────────────────────────
   mutable std::mutex queue_mutex_;
   std::condition_variable queue_cv_;
@@ -88,6 +92,7 @@ private:
   // ── per-window stats (written from multiple threads) ──────────────────────
   std::atomic<uint32_t> bytes_sent_window_{0};
   std::atomic<uint8_t> dropped_window_{0};
+  std::atomic<uint32_t> gaps_window_{0};
   uint16_t window_ms_{100};
 
   // ── send thread ───────────────────────────────────────────────────────────

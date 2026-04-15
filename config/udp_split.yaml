@@ -12,7 +12,7 @@
     outbound_topic: "/udp1/bridge_frame_out"
     inbound_topic:  "/udp1/bridge_frame_in"
     status_topic:   "/udp1/interface_status"
-    use_addressing: false
+    use_addressing: true
     
     # config_file is injected by the launch file at runtime
   
@@ -51,8 +51,7 @@
     outbound_topic: "/udp2/bridge_frame_out"
     inbound_topic:  "/udp2/bridge_frame_in"
     status_topic:   "/udp2/interface_status"
-    use_addressing: false
-    src_addr: 0x02
+    use_addressing: true
     # config_file is injected by the launch file at runtime
     
 /udp2/transport_node:
