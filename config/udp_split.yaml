@@ -1,0 +1,70 @@
+# ROS2 node parameters for the split encoder+transport architecture.
+# Topic definitions live in udp_split_topics.yaml (loaded via config_file).
+#
+# Data flow:
+#   TX side: encoder_node subscribes to 'input' topics, compresses,
+#            publishes BridgeFrame → transport_node → UDP socket
+#   RX side: UDP socket → transport_node → bridge_frame_in →
+#            encoder_node decompresses and publishes on 'output' topics
+
+/udp1/encoder_node:
+  ros__parameters:
+    outbound_topic: "/udp1/bridge_frame_out"
+    inbound_topic:  "/udp1/bridge_frame_in"
+    status_topic:   "/udp1/interface_status"
+    use_addressing: false
+    
+    # config_file is injected by the launch file at runtime
+  
+    
+    # TODO: Could add namespace
+    # Namespace to be applied to subscribed topics
+    # subscribe_namespace: "/udp1"
+    # namespace of published ros2 messages. Can be useful for testing.
+    # publish_namespace: "/udp1"
+
+    # TODO add this
+    # The level of compression to use when sending data over the network (1-22).
+    # Beware that small messages may actually expand with high compression.
+    # Higher compression levels are good for large messages when bandwidth is
+    # small.  Lower compression levels are good for smaller messages or in
+    # cases where bandwidth is less limited than CPU.
+    # Launching with debug logging will show message size in bytes if you wish to tune this.
+    # default_zstd_level: 3
+
+/udp1/transport_node:
+  ros__parameters:
+    network_interface: "network_bridge::UdpInterface"
+    UdpInterface:
+      local_address:  "127.0.0.1"
+      receive_port:   5000
+      remote_address: "127.0.0.1"
+      send_port:      5001
+    outbound_topic: "/udp1/bridge_frame_out"
+    inbound_topic:  "/udp1/bridge_frame_in"
+    status_topic:   "/udp1/interface_status"
+    queue_max:  16
+    window_ms: 100
+
+/udp2/encoder_node:
+  ros__parameters:
+    outbound_topic: "/udp2/bridge_frame_out"
+    inbound_topic:  "/udp2/bridge_frame_in"
+    status_topic:   "/udp2/interface_status"
+    use_addressing: false
+    src_addr: 0x02
+    # config_file is injected by the launch file at runtime
+    
+/udp2/transport_node:
+  ros__parameters:
+    network_interface: "network_bridge::UdpInterface"
+    UdpInterface:
+      local_address:  "127.0.0.1"
+      receive_port:   5001
+      remote_address: "127.0.0.1"
+      send_port:      5000
+    outbound_topic: "/udp2/bridge_frame_out"
+    inbound_topic:  "/udp2/bridge_frame_in"
+    status_topic:   "/udp2/interface_status"
+    queue_max:  16
+    window_ms: 100

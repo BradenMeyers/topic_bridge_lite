@@ -1,0 +1,35 @@
+src_addr: 2
+topics:
+  # Send /vector from udp1 side to udp2 side, republish as /vector/forwarded/a
+  - input:    /vector/test
+    output:   /vector/forwarded/a
+    type:     geometry_msgs/msg/Vector3Stamped
+    id:       0
+    mode:     tx
+    # dst_addr: 0x02   # optional: destination address when use_addressing is enabled
+    # rate:     10.0
+    # priority: medium
+    # queue_max: 4
+
+  - input:    /vector/test
+    output:   /vector/forwarded/b
+    type:     geometry_msgs/msg/Vector3Stamped
+    id:       0
+    mode:     rx
+    # src_addr: 0x01   # optional: filter by source address when use_addressing is enabled
+
+  # Example: send /cmd_vel with high priority
+  # - input:    /cmd_vel
+  #   output:   /cmd_vel/forwarded
+  #   type:     geometry_msgs/msg/Twist
+  #   id:       1
+  #   mode:     tx
+  #   rate:     20.0
+  #   priority: high
+  #   queue_max: 2
+  #
+  # - input:    /cmd_vel
+  #   output:   /cmd_vel/forwarded
+  #   type:     geometry_msgs/msg/Twist
+  #   id:       1
+  #   mode:     rx

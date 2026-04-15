@@ -1,492 +1,377 @@
-/*
-==============================================================================
-MIT License
-
-Copyright (c) 2024 Ethan M Brown
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-==============================================================================
-*/
-
-#include "network_bridge/network_bridge.hpp"
+#include "network_bridge/encoder_node.hpp"
 
 #include <zstd.h>
 #include <span>
-#include <fstream>
-#include <bit>
 
-#include <rclcpp/serialization.hpp>
-#include <pluginlib/class_loader.hpp>
-#include <std_msgs/msg/string.hpp>
+#include <yaml-cpp/yaml.h>
 
 #include "network_bridge/subscription_manager_tf.hpp"
-#include "network_interfaces/network_interface_base.hpp"
 
-NetworkBridge::NetworkBridge(const std::string & node_name)
-: Node(node_name),
-  loader_("network_bridge", "network_bridge::NetworkInterface") {}
+EncoderNode::EncoderNode(const std::string & node_name)
+: Node(node_name) {}
 
-NetworkBridge::~NetworkBridge()
+EncoderNode::~EncoderNode()
 {
   shutdown();
 }
 
-void NetworkBridge::initialize()
+void EncoderNode::initialize()
 {
   load_parameters();
-  load_network_interface();
-  network_interface_->open();
 }
 
-void NetworkBridge::shutdown()
+void EncoderNode::shutdown()
 {
-  RCLCPP_INFO(this->get_logger(), "NetworkBridge: Shuting down");
-  if (network_interface_) {
-    network_interface_->close();
-  }
-  network_interface_.reset();
-
-  network_check_timer_.reset();
-  sub_mgrs_.clear();
+  RCLCPP_INFO(this->get_logger(), "EncoderNode: shutting down");
   timers_.clear();
-  publishers_.clear();
+  tx_queues_.clear();
+  rx_registry_.clear();
+  bridge_frame_pub_.reset();
+  inbound_sub_.reset();
+  status_sub_.reset();
 }
 
-void NetworkBridge::load_parameters()
+void EncoderNode::load_parameters()
 {
-  this->declare_parameter(
-    "network_interface",
-    std::string("network_bridge::UdpInterface"));
-  this->get_parameter("network_interface", network_interface_name_);
+  this->declare_parameter("outbound_topic", outbound_topic_);
+  this->declare_parameter("inbound_topic", inbound_topic_);
+  this->declare_parameter("status_topic", status_topic_);
+  this->declare_parameter("config_file", std::string(""));
+  this->declare_parameter("use_addressing", false);
 
-  bool publish_stale_data;
-  this->declare_parameter("publish_stale_data", false);
-  this->get_parameter("publish_stale_data", publish_stale_data);
-  // Defaults
-  this->declare_parameter("default_rate", 5.0);
-  this->declare_parameter("default_zstd_level", 3);
+  this->get_parameter("outbound_topic", outbound_topic_);
+  this->get_parameter("inbound_topic", inbound_topic_);
+  this->get_parameter("status_topic", status_topic_);
+  this->get_parameter("use_addressing", use_addressing_);
 
-  float default_rate;
-  int default_zstd_level;
-  this->get_parameter("default_rate", default_rate);
-  this->get_parameter("default_zstd_level", default_zstd_level);
+  std::string config_file;
+  this->get_parameter("config_file", config_file);
 
-  this->declare_parameter("publish_namespace", "");
-  this->get_parameter("publish_namespace", publish_namespace_);
+  bridge_frame_pub_ =
+    this->create_publisher<network_bridge::msg::BridgeFrame>(outbound_topic_, 10);
 
-  if (!publish_namespace_.empty()) {
-    if (publish_namespace_.front() != '/') {
-      publish_namespace_.insert(0, "/");
+  inbound_sub_ = this->create_subscription<network_bridge::msg::BridgeFrame>(
+    inbound_topic_, 20,
+    [this](const network_bridge::msg::BridgeFrame::SharedPtr msg) {
+      on_inbound_frame(msg);
+    });
+
+  status_sub_ = this->create_subscription<network_bridge::msg::InterfaceStatus>(
+    status_topic_, 10,
+    [this](const network_bridge::msg::InterfaceStatus::SharedPtr msg) {
+      on_interface_status(msg);
+    });
+    
+    if (config_file.empty()) {
+      RCLCPP_WARN(this->get_logger(), "No config_file set — no topics will be bridged");
+      return;
     }
-    if (publish_namespace_.back() == '/') {
-      publish_namespace_.pop_back();
-    }
+    
+    load_topic_config(config_file);
+
     RCLCPP_INFO(
       this->get_logger(),
-      "Topics will be published under the namespace %s",
-      publish_namespace_.c_str());
+      "out='%s' in='%s' status='%s' addressing=%s src=0x%02X",
+      outbound_topic_.c_str(), inbound_topic_.c_str(), status_topic_.c_str(),
+      use_addressing_ ? "on" : "off", src_addr_);
+}
+
+void EncoderNode::load_topic_config(const std::string & path)
+{
+  YAML::Node root;
+  try {
+    root = YAML::LoadFile(path);
+  } catch (const YAML::Exception & e) {
+    RCLCPP_ERROR(
+      this->get_logger(), "Failed to load config_file '%s': %s", path.c_str(), e.what());
+    return;
+  }
+  src_addr_ = root["src_addr"].as<uint8_t>(0);
+
+  auto topics_node = root["topics"];
+  if (!topics_node || !topics_node.IsSequence()) {
+    RCLCPP_ERROR(this->get_logger(), "config_file has no 'topics' list");
+    return;
   }
 
-  std::string subscribe_namespace;
-  this->declare_parameter("subscribe_namespace", "");
-  this->get_parameter("subscribe_namespace", subscribe_namespace);
+  for (auto entry : topics_node) {
+    network_bridge::TopicConfig cfg;
+    cfg.id = entry["id"].as<uint8_t>(0);
+    cfg.mode = entry["mode"].as<std::string>("tx");
+    cfg.input = entry["input"].as<std::string>("");
+    cfg.output = entry["output"].as<std::string>("");
+    cfg.type = entry["type"].as<std::string>("");
+    cfg.rate = entry["rate"].as<float>(5.0f);
+    cfg.queue_max = entry["queue_max"].as<int>(8);
+    cfg.zstd_level = entry["zstd_level"].as<int>(3);
+    cfg.publish_stale_data = entry["publish_stale_data"].as<bool>(false);
+    cfg.dst_addr = static_cast<uint8_t>(entry["dst_addr"].as<int>(0x00) & 0xFF);
+    cfg.src_addr = static_cast<uint8_t>(entry["src_addr"].as<int>(0x00) & 0xFF);
 
-  if (!subscribe_namespace.empty()) {
-    if (subscribe_namespace.front() != '/') {
-      subscribe_namespace.insert(0, "/");
+    std::string prio_str = entry["priority"].as<std::string>("medium");
+    if (prio_str == "low") {
+      cfg.priority = network_bridge::Priority::LOW;
+    } else if (prio_str == "high") {
+      cfg.priority = network_bridge::Priority::HIGH;
     }
-    if (subscribe_namespace.back() == '/') {
-      subscribe_namespace.pop_back();
+
+    std::string drop_str = entry["drop_policy"].as<std::string>("latest");
+    cfg.drop_policy = (drop_str == "fifo") ?
+      network_bridge::DropPolicy::FIFO : network_bridge::DropPolicy::LATEST;
+
+    std::string t = cfg.input;
+    cfg.is_tf = (t == "/tf" || t == "tf" || t == "/tf_static" || t == "tf_static");
+    cfg.is_tf = entry["is_tf"].as<bool>(cfg.is_tf);
+    cfg.is_static_tf = cfg.is_tf && (t == "/tf_static" || t == "tf_static");
+    cfg.is_static_tf = entry["is_static_tf"].as<bool>(cfg.is_static_tf);
+
+    if (entry["tf_include"] && entry["tf_include"].IsSequence()) {
+      for (auto v : entry["tf_include"]) {cfg.tf_include.push_back(v.as<std::string>());}
     }
-    RCLCPP_INFO(
-      this->get_logger(),
-      "Topics will be subscribed to under the namespace %s",
-      subscribe_namespace.c_str());
-  }
+    if (entry["tf_exclude"] && entry["tf_exclude"].IsSequence()) {
+      for (auto v : entry["tf_exclude"]) {cfg.tf_exclude.push_back(v.as<std::string>());}
+    }
 
-  // Load topics information
-  this->declare_parameter<std::vector<std::string>>(
-    "topics",
-    std::vector<std::string>{});
+    if (cfg.type.empty()) {
+      RCLCPP_ERROR(this->get_logger(), "Topic id=%u has no 'type' — skipping", cfg.id);
+      continue;
+    }
 
-  std::vector<std::string> topics;
-  this->get_parameter("topics", topics);
-
-  for (const auto & topic : topics) {
-    std::string rate_param_name = topic + ".rate";
-    std::string zstd_level_param_name = topic + ".zstd_level";
-    std::string is_tf_param_name = topic + ".is_tf";
-    bool is_tf = (topic == "/tf") || (topic == "tf") || (topic == "/tf_static") ||
-      (topic == "tf_static");
-    bool is_static_tf = is_tf && ((topic == "/tf_static") || (topic == "tf_static"));
-    float rate = 1;
-    int zstd_level = 3;
-
-
-    this->declare_parameter<int>(zstd_level_param_name, default_zstd_level);
-    // Add this parameter to force the tf nature if needed
-    this->declare_parameter<bool>(is_tf_param_name, is_tf);
-    this->declare_parameter<double>(rate_param_name, default_rate);
-    this->get_parameter(is_tf_param_name, is_tf);
-    this->get_parameter(rate_param_name, rate);
-    this->get_parameter(zstd_level_param_name, zstd_level);
-
-    if (is_tf) {
-      // Add this parameter to force the static tf nature if needed
-      std::string is_static_tf_param_name = topic + ".is_static_tf";
-      this->declare_parameter<bool>(is_static_tf_param_name, is_static_tf);
-      std::string tf_include_param_name = topic + ".include";
-      std::string tf_exclude_param_name = topic + ".exclude";
-      std::vector<std::string> tf_include, tf_exclude;
-      this->declare_parameter(tf_include_param_name, tf_include);
-      this->declare_parameter(tf_exclude_param_name, tf_exclude);
-
-      this->get_parameter(is_static_tf_param_name, is_static_tf);
-      this->get_parameter(tf_include_param_name, tf_include);
-      this->get_parameter(tf_exclude_param_name, tf_exclude);
-
-      std::shared_ptr<SubscriptionManagerTF> manager(new SubscriptionManagerTF(
-          shared_from_this(), topic, subscribe_namespace,
-          zstd_level, publish_stale_data, is_static_tf));
-      if (!tf_include.empty()) {
-        manager->set_include_pattern(tf_include);
+    if (cfg.mode == "tx") {
+      if (cfg.input.empty()) {
+        RCLCPP_ERROR(this->get_logger(), "TX id=%u has no 'input' — skipping", cfg.id);
+        continue;
       }
-      if (!tf_exclude.empty()) {
-        manager->set_exclude_pattern(tf_exclude);
+
+      std::shared_ptr<SubscriptionManager> mgr;
+      if (cfg.is_tf) {
+        auto tf_mgr = std::make_shared<SubscriptionManagerTF>(
+          shared_from_this(), cfg.input, "",
+          cfg.zstd_level, cfg.publish_stale_data, cfg.is_static_tf);
+        if (!cfg.tf_include.empty()) {tf_mgr->set_include_pattern(cfg.tf_include);}
+        if (!cfg.tf_exclude.empty()) {tf_mgr->set_exclude_pattern(cfg.tf_exclude);}
+        tf_mgr->setup_subscription();
+        mgr = tf_mgr;
+      } else {
+        mgr = std::make_shared<SubscriptionManager>(
+          shared_from_this(), cfg.input, "",
+          cfg.zstd_level, cfg.publish_stale_data);
+        mgr->setup_subscription();
       }
-      manager->setup_subscription();
-      sub_mgrs_.push_back(std::static_pointer_cast<SubscriptionManager>(manager));
 
-      // TODO: specialize this
-      int ms = static_cast<int>(1000.0 / rate);
-      auto timer = this->create_wall_timer(
-        std::chrono::milliseconds(ms),
-        [this, manager]() {
-          send_data(manager);
-        });
+      network_bridge::TxQueue tq;
+      tq.config = cfg;
+      tq.sub_mgr = mgr;
+      tx_queues_.push_back(std::move(tq));
 
-      timers_.push_back(timer);
+      int ms = static_cast<int>(1000.0f / cfg.rate);
+      size_t idx = tx_queues_.size() - 1;
+      timers_.push_back(this->create_wall_timer(
+          std::chrono::milliseconds(ms),
+          [this, idx]() {encode_and_publish(tx_queues_[idx]);}));
+
       RCLCPP_INFO(
         this->get_logger(),
-        "TF Topic: %s, Rate: %f Hz", topic.c_str(), rate);
+        "TX id=%u dst=0x%02X  %s [%s]  %.1fHz  pri=%s  drop=%s  q=%d",
+        cfg.id, cfg.dst_addr, cfg.input.c_str(), cfg.type.c_str(), cfg.rate,
+        prio_str.c_str(), drop_str.c_str(), cfg.queue_max);
+
+    } else if (cfg.mode == "rx") {
+      if (cfg.output.empty()) {
+        RCLCPP_ERROR(this->get_logger(), "RX id=%u has no 'output' — skipping", cfg.id);
+        continue;
+      }
+      auto key = std::make_pair(cfg.src_addr, cfg.id);
+      network_bridge::RxEntry rx;
+      rx.config = cfg;
+      rx_registry_[key] = std::move(rx);
+
+      RCLCPP_INFO(
+        this->get_logger(),
+        "RX id=%u src=0x%02X  → %s [%s]",
+        cfg.id, cfg.src_addr, cfg.output.c_str(), cfg.type.c_str());
     } else {
-      auto manager = std::make_shared<SubscriptionManager>(
-        shared_from_this(), topic, subscribe_namespace,
-        zstd_level, publish_stale_data);
-      manager->setup_subscription();
-      sub_mgrs_.push_back(manager);
-
-      int ms = static_cast<int>(1000.0 / rate);
-      auto timer = this->create_wall_timer(
-        std::chrono::milliseconds(ms),
-        [this, manager]() {
-          send_data(manager);
-        });
-
-      timers_.push_back(timer);
-      RCLCPP_INFO(
-        this->get_logger(),
-        "Topic: %s, Rate: %f Hz", topic.c_str(), rate);
+      RCLCPP_ERROR(
+        this->get_logger(), "Unknown mode '%s' for id=%u", cfg.mode.c_str(), cfg.id);
     }
-
-  }
-
-  network_check_timer_ = this->create_wall_timer(
-    std::chrono::milliseconds(500),
-    std::bind(&NetworkBridge::check_network_health, this));
-
-}
-
-void NetworkBridge::check_network_health()
-{
-  if (!network_interface_) {
-    initialize();
-    return;
-  }
-  if (network_interface_->has_failed()) {
-    RCLCPP_INFO(this->get_logger(), "Network interface has failed. Resetting");
-    network_interface_->close();
-    network_interface_->open();
-    return;
   }
 }
 
-void NetworkBridge::load_network_interface()
+void EncoderNode::encode_and_publish(network_bridge::TxQueue & tq)
 {
+  tq.sub_mgr->check_subscription();
+
+  if (tq.sub_mgr->has_data()) {
+    bool is_valid = false;
+    const std::vector<uint8_t> & raw = tq.sub_mgr->get_data(is_valid);
+
+    if (is_valid && !raw.empty()) {
+      std::vector<uint8_t> compressed;
+      try {
+        compress(raw, compressed, tq.config.zstd_level);
+      } catch (const std::exception & e) {
+        RCLCPP_ERROR(this->get_logger(), "Compression failed: %s", e.what());
+        return;
+      }
+
+      if (tq.queue.size() >= static_cast<size_t>(tq.config.queue_max)) {
+        if (tq.config.drop_policy == network_bridge::DropPolicy::FIFO) {
+          tq.queue.pop_front();
+        } else {
+          RCLCPP_DEBUG(
+            this->get_logger(), "Queue full, dropping latest for %s",
+            tq.config.input.c_str());
+          return;
+        }
+      }
+      tq.queue.push_back(std::move(compressed));
+    }
+  }
+
+  if (tq.queue.empty()) {return;}
+
+  if (tq.config.priority < min_publishable_priority()) {
+    RCLCPP_DEBUG(
+      this->get_logger(), "Priority gate closed for %s (medium_state=%u)",
+      tq.config.input.c_str(), medium_state_);
+    return;
+  }
+
+  const std::vector<uint8_t> & compressed = tq.queue.front();
+
+  // Build the complete wire packet. Transport calls write(payload) unchanged.
+  std::vector<uint8_t> wire;
+  wire.reserve((use_addressing_ ? 2 : 0) + 2 + compressed.size());
+  if (use_addressing_) {
+    wire.push_back(tq.config.dst_addr);
+    wire.push_back(src_addr_);
+  }
+  wire.push_back(tq.config.id);
+  wire.push_back(sequence_);
+  wire.insert(wire.end(), compressed.begin(), compressed.end());
+  tq.queue.pop_front();
+
+  network_bridge::msg::BridgeFrame frame;
+  frame.dst_addr = use_addressing_ ? tq.config.dst_addr : 0;
+  frame.src_addr = use_addressing_ ? src_addr_ : 0;
+  frame.topic_id = tq.config.id;
+  frame.sequence = sequence_++;
+  frame.payload  = std::move(wire);
+
+  bridge_frame_pub_->publish(frame);
+}
+
+void EncoderNode::on_inbound_frame(const network_bridge::msg::BridgeFrame::SharedPtr msg)
+{
+  if (msg->payload.size() < (use_addressing_ ? 4u : 2u)) {
+    RCLCPP_WARN(this->get_logger(), "Inbound frame too short (%zu bytes)", msg->payload.size());
+    return;
+  }
+
+  size_t offset = 0;
+  uint8_t src_addr = 0x00;
+  if (use_addressing_) {
+    // payload[0] = dst_addr (our address, not used for routing here)
+    src_addr = msg->payload[1];
+    offset = 2;
+  }
+  uint8_t topic_id = msg->payload[offset];
+  // uint8_t sequence = msg->payload[offset + 1];  // available for future use
+  auto key = std::make_pair(src_addr, topic_id);
+
+  auto it = rx_registry_.find(key);
+  if (it == rx_registry_.end()) {
+    RCLCPP_DEBUG(
+      this->get_logger(), "No RX entry for (src=0x%02X, id=%u)", src_addr, topic_id);
+    return;
+  }
+  auto & entry = it->second;
+
+  std::span<const uint8_t> zstd_data(
+    msg->payload.data() + offset + 2,
+    msg->payload.size() - offset - 2);
+
+  std::vector<uint8_t> decompressed;
   try {
-    network_interface_ = loader_.createSharedInstance(network_interface_name_);
-
-    network_interface_->initialize(
-      shared_from_this(),
-      std::bind(
-        &NetworkBridge::receive_data,
-        this,
-        std::placeholders::_1));
-
-    RCLCPP_INFO(
-      this->get_logger(),
-      "Loaded network interface: %s", network_interface_name_.c_str());
-  } catch (const pluginlib::PluginlibException & ex) {
-    RCLCPP_FATAL(
-      this->get_logger(),
-      "Failed to load network interface: %s", ex.what());
-    rclcpp::shutdown();
-    exit(1);
-  }
-}
-
-void NetworkBridge::receive_data(std::span<const uint8_t> data)
-{
-  if (!rclcpp::ok()) {
-    return;
-  }
-
-  auto now = std::chrono::system_clock::now();
-
-  // Decompress data
-  std::vector<uint8_t> decompressed_data;
-  try {
-    decompress(data, decompressed_data);
+    decompress(zstd_data, decompressed);
   } catch (const std::exception & e) {
     RCLCPP_ERROR(
-      this->get_logger(),
-      "Decompression Failed: %s", e.what());
-  }
-
-  std::string topic;
-  std::string type;
-  double current_time;
-  parse_header(decompressed_data, topic, type, current_time);
-
-  if (topic.empty() || type.empty()) {
-    RCLCPP_ERROR(this->get_logger(), "Malformed header!");
+      this->get_logger(), "Decompression failed (src=0x%02X id=%u): %s",
+      src_addr, topic_id, e.what());
     return;
   }
 
-  int header_length = sizeof(current_time) + topic.size() + type.size() + 2;
-
-  std::span<const uint8_t> payload(
-    decompressed_data.begin() + header_length, decompressed_data.end());
-
-  float delay = rclcpp::Clock().now().seconds() - current_time;
-  RCLCPP_DEBUG(
-    this->get_logger(),
-    "Received %lu bytes on topic %s with type %s",
-    data.size(), topic.c_str(), type.c_str());
-  RCLCPP_DEBUG(
-    this->get_logger(),
-    "Decompressed data size: %lu", decompressed_data.size());
-  RCLCPP_DEBUG(this->get_logger(), "Delay: %f ms", delay * 1000);
-
-  if (publishers_.find(topic) == publishers_.end()) {
-    // Create a QoS configuration with reliability and durability settings
+  if (!entry.publisher) {
     rclcpp::QoS qos(10);
-
-    // Set QoS to Reliable
-    qos.reliable();
-
-    // Set QoS to Transient Local Durability
-    qos.transient_local();
-    publishers_[topic] = this->create_generic_publisher(
-      publish_namespace_ + topic, type, qos);
+    qos.reliable().transient_local();
+    entry.publisher =
+      this->create_generic_publisher(entry.config.output, entry.config.type, qos);
     RCLCPP_INFO(
-      this->get_logger(), "Created publisher on %s type %s",
-      (publish_namespace_ + topic).c_str(), type.c_str());
+      this->get_logger(), "Created RX publisher %s [%s]",
+      entry.config.output.c_str(), entry.config.type.c_str());
   }
 
-  rclcpp::SerializedMessage msg(payload.size());
-  std::copy(
-    payload.begin(), payload.end(),
-    msg.get_rcl_serialized_message().buffer);
+  rclcpp::SerializedMessage serialized(decompressed.size());
+  auto & rcl_msg = serialized.get_rcl_serialized_message();
+  std::copy(decompressed.begin(), decompressed.end(), rcl_msg.buffer);
+  rcl_msg.buffer_length = decompressed.size();
 
-  msg.get_rcl_serialized_message().buffer_length = payload.size();
-  if (rclcpp::ok()) {
-    publishers_[topic]->publish(msg);
-  }
+  entry.publisher->publish(serialized);
 
-  auto end = std::chrono::system_clock::now();
   RCLCPP_DEBUG(
-    this->get_logger(),
-    "Receive time: %f ms",
-    std::chrono::duration<double, std::milli>(end - now).count());
+    this->get_logger(), "RX src=0x%02X id=%u", src_addr, topic_id);
 }
 
-void NetworkBridge::send_data(std::shared_ptr<SubscriptionManager> manager)
+void EncoderNode::on_interface_status(
+  const network_bridge::msg::InterfaceStatus::SharedPtr msg)
 {
-  manager->check_subscription();
-  if (!manager->has_data()) {
-    return;
-  }
-  if (!network_interface_->is_ready()) {
-    return;
-  }
-
-  bool is_data_valid = false;
-  const std::vector<uint8_t> & data = manager->get_data(is_data_valid);
-  if (data.empty() || !is_data_valid) { // This should not happen given the test above
-    RCLCPP_WARN(
-      this->get_logger(),
-      "SubscriptionManager %s has no data", manager->topic_.c_str());
-    return;
-  }
-
-  auto now = std::chrono::system_clock::now();
-  const std::string & topic = manager->topic_;
-  const std::string & type = manager->msg_type_;
-
-  auto header = create_header(topic, type);
-
-  // Form message
-  std::vector<uint8_t> message;
-  message.reserve(header.size() + data.size());
-  message.insert(message.end(), header.begin(), header.end());
-  message.insert(message.end(), data.begin(), data.end());
-
-  // Compress data
-  std::vector<uint8_t> compressed_data;
-  try {
-    compress(message, compressed_data, manager->zstd_compression_level_);
-  } catch (const std::exception & e) {
-    RCLCPP_ERROR(
-      this->get_logger(),
-      "Compression Failed: %s", e.what());
-    return;
-  }
-
-  // Send data
-  network_interface_->write(compressed_data);
-  auto end = std::chrono::system_clock::now();
-  RCLCPP_DEBUG(
-    this->get_logger(),
-    "Send time: %f ms",
-    std::chrono::duration<double, std::milli>(end - now).count());
+  medium_state_ = msg->medium_state;
 }
 
-std::vector<uint8_t> NetworkBridge::create_header(
-  const std::string & topic,
-  const std::string & msg_type)
+void EncoderNode::compress(
+  const std::vector<uint8_t> & data, std::vector<uint8_t> & out, int level)
 {
-  double current_time = rclcpp::Clock().now().seconds();
-  auto current_time_bytes =
-    std::bit_cast<std::array<uint8_t, sizeof(current_time)>>(current_time);
-
-  int header_length =
-    current_time_bytes.size() + topic.size() + 1 + msg_type.size() + 1;
-
-  std::vector<uint8_t> header;
-  header.reserve(header_length);
-
-  header.insert(
-    header.end(), current_time_bytes.begin(), current_time_bytes.end());
-
-  header.insert(header.end(), topic.begin(), topic.end());
-  header.push_back('\0');
-
-  header.insert(header.end(), msg_type.begin(), msg_type.end());
-  header.push_back('\0');
-  return header;
+  size_t capacity = ZSTD_compressBound(data.size());
+  out.resize(capacity);
+  size_t result = ZSTD_compress(out.data(), capacity, data.data(), data.size(), level);
+  if (ZSTD_isError(result)) {throw std::runtime_error(ZSTD_getErrorName(result));}
+  out.resize(result);
 }
 
-void NetworkBridge::parse_header(
-  const std::vector<uint8_t> & header,
-  std::string & topic, std::string & msg_type,
-  double & time)
+void EncoderNode::decompress(std::span<const uint8_t> data, std::vector<uint8_t> & out)
 {
-  // Add 4 for minimum usable header size
-  // (1 char for topic, 1 for msg_type, and 2 null terminators)
-  if (header.size() < sizeof(time) + 4) {
-    RCLCPP_ERROR(this->get_logger(), "Malformed header!");
-    return;
-  }
-
-  time = std::bit_cast<double>(header.data());
-  topic = reinterpret_cast<const char *>(header.data() + sizeof(time));
-  msg_type = reinterpret_cast<const char *>(
-    header.data() + sizeof(time) + topic.size() + 1);
-}
-
-void NetworkBridge::compress(
-  std::vector<uint8_t> const & data,
-  std::vector<uint8_t> & compressed_data,
-  int zstd_compression_level)
-{
-  size_t compressedCapacity = ZSTD_compressBound(data.size());
-
-  // Resize the output buffer to the capacity needed
-  compressed_data.resize(compressedCapacity);
-
-  // Compress the data
-  size_t compressedSize = ZSTD_compress(
-    compressed_data.data(), compressedCapacity, data.data(), data.size(),
-    zstd_compression_level);
-
-  // Check for errors
-  if (ZSTD_isError(compressedSize)) {
-    throw std::runtime_error(ZSTD_getErrorName(compressedSize));
-  }
-
-  // Resize compressed_data to actual compressed size
-  compressed_data.resize(compressedSize);
-}
-
-void NetworkBridge::decompress(
-  std::span<const uint8_t> compressed_data,
-  std::vector<uint8_t> & data)
-{
-  // Find the size of the original uncompressed data
-  size_t decompressed_size = ZSTD_getFrameContentSize(
-    compressed_data.data(), compressed_data.size());
-
-  // Check if the size is known and valid
+  size_t decompressed_size = ZSTD_getFrameContentSize(data.data(), data.size());
   if (decompressed_size == ZSTD_CONTENTSIZE_ERROR) {
-    throw std::runtime_error("Not compressed by Zstd");
-  } else if (decompressed_size == ZSTD_CONTENTSIZE_UNKNOWN) {
-    throw std::runtime_error("Original size unknown");
+    throw std::runtime_error("Not a zstd frame");
   }
+  if (decompressed_size == ZSTD_CONTENTSIZE_UNKNOWN) {
+    throw std::runtime_error("zstd frame size unknown");
+  }
+  out.resize(decompressed_size);
+  size_t result = ZSTD_decompress(out.data(), decompressed_size, data.data(), data.size());
+  if (ZSTD_isError(result)) {throw std::runtime_error(ZSTD_getErrorName(result));}
+}
 
-  // Resize the output buffer to the size of the uncompressed data
-  data.resize(decompressed_size);
-
-  // Decompress the data
-  size_t decompressed_result = ZSTD_decompress(
-    data.data(), decompressed_size, compressed_data.data(),
-    compressed_data.size());
-
-  // Check for errors during decompression
-  if (ZSTD_isError(decompressed_result)) {
-    throw std::runtime_error(ZSTD_getErrorName(decompressed_result));
+network_bridge::Priority EncoderNode::min_publishable_priority() const
+{
+  switch (medium_state_) {
+    case 1: return network_bridge::Priority::LOW;
+    case 2: return network_bridge::Priority::MEDIUM;
+    case 0:
+    case 3:
+    default: return network_bridge::Priority::HIGH;
   }
 }
 
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  // Randomized name to avoid conflicts
-  std::string node_name = "network_bridge" + std::to_string(::getpid());
-
-  auto node = std::make_shared<NetworkBridge>(node_name);
+  auto node = std::make_shared<EncoderNode>(
+    "encoder_node_" + std::to_string(::getpid()));
   node->initialize();
-
   rclcpp::spin(node);
   node->shutdown();
   node.reset();
-
   rclcpp::shutdown();
   return 0;
 }

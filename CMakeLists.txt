@@ -12,6 +12,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(tf2_msgs REQUIRED)
@@ -20,6 +21,13 @@ find_package(pluginlib REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(ZSTD REQUIRED libzstd)
+find_package(yaml-cpp REQUIRED)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/BridgeFrame.msg"
+  "msg/InterfaceStatus.msg"
+  DEPENDENCIES std_msgs
+)
 
 if(BUILD_TESTING)
   find_package(launch_testing_ament_cmake REQUIRED)
@@ -41,10 +49,28 @@ endif()
 
 include_directories(include)
 
-add_executable(network_bridge
-    src/network_bridge.cpp
-    src/subscription_manager.cpp
-    src/subscription_manager_tf.cpp
+add_executable(encoder_node
+  src/network_bridge.cpp
+  src/subscription_manager.cpp
+  src/subscription_manager_tf.cpp
+)
+
+target_link_libraries(encoder_node PUBLIC
+  ${tf2_msgs_TARGETS}
+  rclcpp::rclcpp
+  tf2_ros::tf2_ros
+  ${ZSTD_LIBRARIES}
+  yaml-cpp
+)
+
+add_executable(transport_node
+  src/transport_node.cpp
+)
+
+target_link_libraries(transport_node PUBLIC
+  pluginlib::pluginlib
+  rclcpp::rclcpp
+  ${Boost_LIBRARIES}
 )
 
 add_library(udp_interface SHARED
@@ -53,15 +79,6 @@ add_library(udp_interface SHARED
 
 add_library(tcp_interface SHARED
   src/network_interfaces/tcp_interface.cpp
-)
-
-target_link_libraries(network_bridge PUBLIC
-  ${std_msgs_TARGETS}
-  ${tf2_msgs_TARGETS}
-  pluginlib::pluginlib
-  rclcpp::rclcpp
-  tf2_ros::tf2_ros
-  ${ZSTD_LIBRARIES}
 )
 
 target_link_libraries(udp_interface PUBLIC
@@ -76,10 +93,15 @@ target_link_libraries(tcp_interface PUBLIC
   ${Boost_LIBRARIES}
 )
 
+rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+target_link_libraries(encoder_node PUBLIC "${cpp_typesupport_target}")
+target_link_libraries(transport_node PUBLIC "${cpp_typesupport_target}")
+
 pluginlib_export_plugin_description_file(network_bridge network_interface_plugins.xml)
 
 install(TARGETS
-  network_bridge
+  encoder_node
+  transport_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -94,5 +116,12 @@ install(DIRECTORY
   launch
   DESTINATION share/${PROJECT_NAME}
 )
+
+install(PROGRAMS
+  scripts/dummy_publisher.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+ament_export_dependencies(rosidl_default_runtime)
 
 ament_package()
