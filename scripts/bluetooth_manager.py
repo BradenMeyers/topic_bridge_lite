@@ -82,9 +82,9 @@ class BluetoothDevice(NetworkInterface):
                 socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM
             )
             self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self._server_sock.bind(("", self._channel))
+            self._server_sock.bind(("00:00:00:00:00:00", self._channel))
             self._server_sock.listen(1)
-            self._log.info(f"Bluetooth server listening on channel {self._channel}")
+            self._log.info(f"Bluetooth server listening on RFCOMM channel {self._channel}")
 
             self._accept_thread = threading.Thread(
                 target=self._accept_loop, daemon=True, name="bt_accept"
