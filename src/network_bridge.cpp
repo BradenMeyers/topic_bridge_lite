@@ -301,9 +301,12 @@ void EncoderNode::on_inbound_frame(const network_bridge::msg::BridgeFrame::Share
   }
   uint8_t topic_id = msg->payload[offset];
   // uint8_t sequence = msg->payload[offset + 1];  // available for future use
-  auto key = std::make_pair(src_addr, topic_id);
 
-  auto it = rx_registry_.find(key);
+  // Try exact src_addr match first, then fall back to wildcard (src_addr=0).
+  auto it = rx_registry_.find({src_addr, topic_id});
+  if (it == rx_registry_.end()) {
+    it = rx_registry_.find({0, topic_id});
+  }
   if (it == rx_registry_.end()) {
     RCLCPP_DEBUG(
       this->get_logger(), "No RX entry for (src=0x%02X, id=%u)", src_addr, topic_id);
