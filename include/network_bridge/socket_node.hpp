@@ -19,9 +19,9 @@
 #include "network_bridge/msg/interface_status.hpp"
 
 /**
- * @class TransportNode
- * @brief Owns the NetworkInterface plugin and shuttles BridgeFrame payloads
- *        to/from the radio.
+ * @class SocketNode
+ * @brief Owns the NetworkInterface plugin (TCP/UDP) and shuttles BridgeFrame
+ *        payloads to/from the radio.
  *
  * Responsibilities:
  *  - Subscribe to BridgeFrame messages from the encoder node and write their
@@ -33,11 +33,11 @@
  * This node is intentionally minimal — all encoding intelligence lives in the
  * encoder node.
  */
-class TransportNode : public rclcpp::Node
+class SocketNode : public rclcpp::Node
 {
 public:
-  explicit TransportNode(const std::string & node_name);
-  ~TransportNode() override;
+  explicit SocketNode(const std::string & node_name);
+  ~SocketNode() override;
 
   void initialize();
   void shutdown();

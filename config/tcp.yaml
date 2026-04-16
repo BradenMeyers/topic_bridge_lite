@@ -1,0 +1,54 @@
+# ROS2 node parameters for the split encoder+transport architecture.
+# Topic definitions live in udp_split_topics.yaml (loaded via config_file).
+#
+# Data flow:
+#   TX side: encoder_node subscribes to 'input' topics, compresses,
+#            publishes BridgeFrame → transport_node → UDP socket
+#   RX side: UDP socket → transport_node → bridge_frame_in →
+#            encoder_node decompresses and publishes on 'output' topics
+
+
+udp1:
+  encoder_node:
+    ros__parameters:
+      outbound_topic: "bridge_frame_out"
+      inbound_topic:  "bridge_frame_in"
+      status_topic:   "interface_status"
+      use_addressing: true
+
+  transport_node:
+    ros__parameters:
+      network_interface: "network_bridge::UdpInterface"
+      UdpInterface:
+        local_address:  "127.0.0.1"
+        receive_port:   5000
+        remote_address: "127.0.0.1"
+        send_port:      5001
+      outbound_topic: "bridge_frame_out"
+      inbound_topic:  "bridge_frame_in"
+      status_topic:   "interface_status"
+      queue_max:  16
+      window_ms: 100
+
+
+udp2:
+  encoder_node:
+    ros__parameters:
+      outbound_topic: "bridge_frame_out"
+      inbound_topic:  "bridge_frame_in"
+      status_topic:   "interface_status"
+      use_addressing: true
+    
+  transport_node:
+    ros__parameters:
+      network_interface: "network_bridge::UdpInterface"
+      UdpInterface:
+        local_address:  "127.0.0.1"
+        receive_port:   5001
+        remote_address: "127.0.0.1"
+        send_port:      5000
+      outbound_topic: "bridge_frame_out"
+      inbound_topic:  "bridge_frame_in"
+      status_topic:   "interface_status"
+      queue_max:  16
+      window_ms: 100

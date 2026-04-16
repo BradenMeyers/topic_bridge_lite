@@ -1,28 +1,28 @@
-#include "network_bridge/transport_node.hpp"
+#include "network_bridge/socket_node.hpp"
 
 #include <pluginlib/class_loader.hpp>
 
 // Construction / destruction
 
-TransportNode::TransportNode(const std::string & node_name)
+SocketNode::SocketNode(const std::string & node_name)
 : Node(node_name),
   loader_("network_bridge", "network_bridge::NetworkInterface") {}
 
-TransportNode::~TransportNode()
+SocketNode::~SocketNode()
 {
   shutdown();
 }
 
-void TransportNode::initialize()
+void SocketNode::initialize()
 {
   load_parameters();
   load_network_interface();
   network_interface_->open();
 }
 
-void TransportNode::shutdown()
+void SocketNode::shutdown()
 {
-  RCLCPP_INFO(this->get_logger(), "TransportNode: shutting down");
+  RCLCPP_INFO(this->get_logger(), "SocketNode: shutting down");
   shutting_down_ = true;
   queue_cv_.notify_all();
   if (send_thread_.joinable()) {send_thread_.join();}
@@ -41,7 +41,7 @@ void TransportNode::shutdown()
 
 // Parameter loading
 
-void TransportNode::load_parameters()
+void SocketNode::load_parameters()
 {
   this->declare_parameter("network_interface", std::string("network_bridge::UdpInterface"));
   this->declare_parameter("queue_max", 32);
@@ -89,14 +89,14 @@ void TransportNode::load_parameters()
 
   RCLCPP_INFO(
     this->get_logger(),
-    "TransportNode: outbound='%s' inbound='%s' status='%s' queue_max=%u window_ms=%u",
+    "SocketNode: outbound='%s' inbound='%s' status='%s' queue_max=%u window_ms=%u",
     outbound_topic_.c_str(), inbound_topic_.c_str(), status_topic_.c_str(),
     queue_max_, window_ms_);
 }
 
 // Network interface
 
-void TransportNode::load_network_interface()
+void SocketNode::load_network_interface()
 {
   try {
     network_interface_ = loader_.createSharedInstance(network_interface_name_);
@@ -119,7 +119,7 @@ void TransportNode::load_network_interface()
   send_thread_ = std::thread([this]() {send_thread_fn();});
 }
 
-void TransportNode::check_network_health()
+void SocketNode::check_network_health()
 {
   if (!network_interface_) {return;}
   if (network_interface_->has_failed()) {
@@ -131,7 +131,7 @@ void TransportNode::check_network_health()
 
 // Send path (ROS callback → queue → send thread → radio)
 
-void TransportNode::on_outbound_frame(const network_bridge::msg::BridgeFrame::SharedPtr msg)
+void SocketNode::on_outbound_frame(const network_bridge::msg::BridgeFrame::SharedPtr msg)
 {
   auto it = rx_last_seq_.find(msg->topic_id);
   if (it != rx_last_seq_.end()) {
@@ -160,7 +160,7 @@ void TransportNode::on_outbound_frame(const network_bridge::msg::BridgeFrame::Sh
   queue_cv_.notify_one();
 }
 
-void TransportNode::send_thread_fn()
+void SocketNode::send_thread_fn()
 {
   while (!shutting_down_.load(std::memory_order_relaxed)) {
     std::vector<uint8_t> payload;
@@ -192,7 +192,7 @@ void TransportNode::send_thread_fn()
 
 // Receive path (radio → ROS2 inbound topic)
 
-void TransportNode::on_radio_receive(std::span<const uint8_t> data)
+void SocketNode::on_radio_receive(std::span<const uint8_t> data)
 {
   if (!rclcpp::ok() || data.empty()) {return;}
 
@@ -203,7 +203,7 @@ void TransportNode::on_radio_receive(std::span<const uint8_t> data)
 
 // Status publisher
 
-uint8_t TransportNode::compute_medium_state() const
+uint8_t SocketNode::compute_medium_state() const
 {
   if (!network_interface_ || !network_interface_->is_ready()) {return 0;}
 
@@ -218,7 +218,7 @@ uint8_t TransportNode::compute_medium_state() const
   return 1;                       // ok
 }
 
-void TransportNode::publish_status()
+void SocketNode::publish_status()
 {
   size_t depth;
   {
@@ -245,9 +245,9 @@ void TransportNode::publish_status()
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  std::string node_name = "transport_node_" + std::to_string(::getpid());
+  std::string node_name = "socket_node_" + std::to_string(::getpid());
 
-  auto node = std::make_shared<TransportNode>(node_name);
+  auto node = std::make_shared<SocketNode>(node_name);
   node->initialize();
 
   rclcpp::spin(node);

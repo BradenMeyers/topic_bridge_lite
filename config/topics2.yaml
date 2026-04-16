@@ -1,0 +1,56 @@
+node_addr: 2
+topics:
+  # Example: send /vector to the remote and receive it back on /vector/bt
+  - input:    /vector
+    output:   /vector/out2
+    type:     geometry_msgs/msg/Vector3Stamped
+    id:       0
+    mode:     duplex
+    rate:     20.0
+    priority: high
+    queue_max: 4
+
+  # Add your topics here following the same pattern.
+  # Fields:
+  #   input     - ROS2 topic to subscribe to (TX side)
+  #   output    - ROS2 topic to publish on (RX side)
+  #   type      - full ROS2 message type, e.g. sensor_msgs/msg/Imu
+  #   id        - unique uint8 per topic for multiplexing (0-255)
+  #   mode      - 'tx', 'rx', or 'duplex'
+  #   rate      - publish rate in Hz
+  #   priority  - 'low', 'medium', or 'high'
+  #   queue_max - max frames to buffer before dropping
+
+# # Send /vector from udp1 side to udp2 side, republish as /vector/forwarded/a
+#   - input:    /vector/test
+#     output:   /vector/forwarded/a
+#     type:     geometry_msgs/msg/Vector3Stamped
+#     id:       0
+#     mode:     tx
+#     # dst_addr: 0x02   # optional: destination address when use_addressing is enabled
+#     # rate:     10.0
+#     # priority: medium
+#     # queue_max: 4
+
+#   - input:    /vector/test
+#     output:   /vector/forwarded/b
+#     type:     geometry_msgs/msg/Vector3Stamped
+#     id:       0
+#     mode:     rx
+#     src_addr: 0x01   # optional: filter by source address when use_addressing is enabled
+
+#   # Example: send /cmd_vel with high priority
+#   # - input:    /cmd_vel
+#   #   output:   /cmd_vel/forwarded
+#   #   type:     geometry_msgs/msg/Twist
+#   #   id:       1
+#   #   mode:     tx
+#   #   rate:     20.0
+#   #   priority: high
+#   #   queue_max: 2
+#   #
+#   # - input:    /cmd_vel
+#   #   output:   /cmd_vel/forwarded
+#   #   type:     geometry_msgs/msg/Twist
+#   #   id:       1
+#   #   mode:     rx

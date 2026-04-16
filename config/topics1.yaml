@@ -2,7 +2,7 @@ node_addr: 1
 topics:
   # Send /vector from udp1 side to udp2 side, republish as /vector/forwarded/a
   - input:    /vector     # Topic to subscribe to on the local ROS2 side
-    output:   /vector/forwarded/a  # Output topic when recieving from the network
+    output:   /vector/out1  # Output topic when recieving from the network
     type:     geometry_msgs/msg/Vector3Stamped  # ROS2 message type
     id:       0   # Message ID for this topic, used for multiplexing in the transport layer
     mode:     duplex  # Mode 'tx', 'rx', or 'duplex'
@@ -11,12 +11,12 @@ topics:
     # priority: medium
     # queue_max: 4
 
-  - input:    /vector/test
-    output:   /vector/forwarded/a
-    type:     geometry_msgs/msg/Vector3Stamped
-    id:       0
-    mode:     rx
-    # src_addr: 0x01   # optional: filter by source address when use_addressing is enabled
+  # - input:    /vector/test
+  #   output:   /vector/forwarded/a
+  #   type:     geometry_msgs/msg/Vector3Stamped
+  #   id:       1
+  #   mode:     rx
+  #   # src_addr: 0x01   # optional: filter by source address when use_addressing is enabled
 
   # Example: send /cmd_vel with high priority
   # - input:    /cmd_vel

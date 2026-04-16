@@ -1,27 +1,51 @@
-/bt/encoder_node:
+/**:
   ros__parameters:
-    outbound_topic: "/bt/bridge_frame_out"
-    inbound_topic:  "/bt/bridge_frame_in"
-    status_topic:   "/bt/interface_status"
-    use_addressing: false
-    # config_file is injected by the launch file at runtime
-
-/bt/bluetooth_transport_node:
-  ros__parameters:
-    # 'server' — wait for an incoming connection (no mac needed)
-    # 'client' — actively connect to the remote device
-    bt_role: "server"
-
-    # Required in client mode. Find with: bluetoothctl devices
-    # Example: "AA:BB:CC:DD:EE:FF"
-    bt_mac_address: "E4:0D:36:FB:EC:D9"
-
+    ## Parameters for both of the transport nodes
+    # Maximum number of frames to queue for sending when the connection is down.
+    queue_max:  32
+    # Time window in milliseconds to consider the connection "up" after receiving a frame.
+    window_ms: 100
     # RFCOMM channel to use (1-30). Both sides must agree on the same channel.
     bt_channel: 1
 
-    outbound_topic: "/bt/bridge_frame_out"
-    inbound_topic:  "/bt/bridge_frame_in"
-    status_topic:   "/bt/interface_status"
+    ## Parameters for all encoder nodes
+    use_addressing: false
 
-    queue_max:  32
-    window_ms: 100
+    ## Parameters for all encoder and transport nodes
+    outbound_topic: "bridge_frame_out"
+    inbound_topic:  "bridge_frame_in"
+    status_topic:   "interface_status"
+
+bt1:
+  encoder_node:
+    ros__parameters:
+      config_file: "config/topics1.yaml"
+
+      # If true, the path in config_file is treated as absolute instead of 
+      # relative to the package share directory.
+      # config_file_absolute: true 
+
+  bluetooth_transport_node:
+    ros__parameters:
+      # 'server' — wait for an incoming connection (no mac needed)
+      # 'client' — actively connect to the remote device
+      bt_role: "server"
+
+      # Required in client mode. Find with: bluetoothctl devices
+      # Example: "AA:BB:CC:DD:EE:FF"
+      # bt_mac_address: ""
+
+bt2:
+  encoder_node:
+    ros__parameters:
+      config_file: "config/topics2.yaml"
+
+  bluetooth_transport_node:
+    ros__parameters:
+      # 'server' — wait for an incoming connection (no mac needed)
+      # 'client' — actively connect to the remote device
+      bt_role: "client"
+
+      # Required in client mode. Find with command: bluetoothctl devices
+      # Example: "AA:BB:CC:DD:EE:FF"
+      bt_mac_address: "28:0C:50:1F:BB:1A"
