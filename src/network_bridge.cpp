@@ -4,6 +4,7 @@
 #include <span>
 
 #include <yaml-cpp/yaml.h>
+#include <ament_index_cpp/get_package_share_directory.hpp>
 
 #include "network_bridge/subscription_manager_tf.hpp"
 
@@ -37,6 +38,7 @@ void EncoderNode::load_parameters()
   this->declare_parameter("inbound_topic", inbound_topic_);
   this->declare_parameter("status_topic", status_topic_);
   this->declare_parameter("config_file", std::string(""));
+  this->declare_parameter("config_file_absolute", false);
   this->declare_parameter("use_addressing", false);
 
   this->get_parameter("outbound_topic", outbound_topic_);
@@ -45,7 +47,14 @@ void EncoderNode::load_parameters()
   this->get_parameter("use_addressing", use_addressing_);
 
   std::string config_file;
+  bool config_file_absolute;
   this->get_parameter("config_file", config_file);
+  this->get_parameter("config_file_absolute", config_file_absolute);
+
+  if (!config_file.empty() && !config_file_absolute) {
+    config_file = ament_index_cpp::get_package_share_directory("network_bridge") +
+      "/" + config_file;
+  }
 
   bridge_frame_pub_ =
     this->create_publisher<network_bridge::msg::BridgeFrame>(outbound_topic_, 10);

@@ -22,6 +22,7 @@ find_package(Boost REQUIRED COMPONENTS system)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(ZSTD REQUIRED libzstd)
 find_package(yaml-cpp REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/BridgeFrame.msg"
@@ -61,13 +62,14 @@ target_link_libraries(encoder_node PUBLIC
   tf2_ros::tf2_ros
   ${ZSTD_LIBRARIES}
   yaml-cpp
+  ament_index_cpp::ament_index_cpp
 )
 
-add_executable(transport_node
-  src/transport_node.cpp
+add_executable(socket_node
+  src/socket_node.cpp
 )
 
-target_link_libraries(transport_node PUBLIC
+target_link_libraries(socket_node PUBLIC
   pluginlib::pluginlib
   rclcpp::rclcpp
   ${Boost_LIBRARIES}
@@ -95,13 +97,13 @@ target_link_libraries(tcp_interface PUBLIC
 
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
 target_link_libraries(encoder_node PUBLIC "${cpp_typesupport_target}")
-target_link_libraries(transport_node PUBLIC "${cpp_typesupport_target}")
+target_link_libraries(socket_node PUBLIC "${cpp_typesupport_target}")
 
 pluginlib_export_plugin_description_file(network_bridge network_interface_plugins.xml)
 
 install(TARGETS
   encoder_node
-  transport_node
+  socket_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
