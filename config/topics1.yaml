@@ -16,7 +16,8 @@ topics:
   #   type:     geometry_msgs/msg/Vector3Stamped
   #   id:       1
   #   mode:     rx
-  #   # src_addr: 0x01   # optional: filter by source address when use_addressing is enabled
+  #   # src_addr: 0x01   # optional: filter RX to a specific sender's node_addr.
+  #   #                  # Omitting src_addr (or setting it to 0) accepts frames from any source.
 
   # Example: send /cmd_vel with high priority
   # - input:    /cmd_vel

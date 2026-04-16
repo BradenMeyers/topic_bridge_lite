@@ -1,10 +1,10 @@
-# ROS2 node parameters for the split encoder+transport architecture.
-# Topic definitions live in udp_split_topics.yaml (loaded via config_file).
+# ROS2 node parameters for UDP transport example.
+# Topic definitions live in files loaded via config_file.
 #
 # Data flow:
 #   TX side: encoder_node subscribes to 'input' topics, compresses,
-#            publishes BridgeFrame → transport_node → UDP socket
-#   RX side: UDP socket → transport_node → bridge_frame_in →
+#            publishes BridgeFrame → socket_node → UDP socket
+#   RX side: UDP socket → socket_node → bridge_frame_in →
 #            encoder_node decompresses and publishes on 'output' topics
 
 # TODO add this
@@ -23,6 +23,9 @@
     window_ms: 100
     network_interface: "network_bridge::UdpInterface"
 
+    # Parameters for all encoder nodes
+    use_addressing: true
+
     # Parameters for Encoder and Socket Nodes
     outbound_topic: "bridge_frame_out"
     inbound_topic:  "bridge_frame_in"
@@ -32,7 +35,6 @@
 socket1:
   encoder_node:
     ros__parameters:
-      use_addressing: true
       config_file: "config/topics1.yaml"
 
       # If true, the path in config_file is treated as absolute instead of 
@@ -51,7 +53,6 @@ socket1:
 socket2:
   encoder_node:
     ros__parameters:
-      use_addressing: true
       config_file: "config/topics2.yaml"
 
   socket_node:

@@ -1,54 +1,52 @@
-# ROS2 node parameters for the split encoder+transport architecture.
-# Topic definitions live in udp_split_topics.yaml (loaded via config_file).
+# ROS2 node parameters for TCP transport example.
+# Topic definitions live in files loaded via config_file.
 #
 # Data flow:
 #   TX side: encoder_node subscribes to 'input' topics, compresses,
-#            publishes BridgeFrame → transport_node → UDP socket
-#   RX side: UDP socket → transport_node → bridge_frame_in →
+#            publishes BridgeFrame → socket_node → TCP socket
+#   RX side: TCP socket → socket_node → bridge_frame_in →
 #            encoder_node decompresses and publishes on 'output' topics
 
+/**:
+  ros__parameters:
+    # Parameters for both of the socket nodes
+    queue_max:  16
+    window_ms: 100
+    network_interface: "network_bridge::TcpInterface"
 
-udp1:
+    # Parameters for all encoder nodes
+    use_addressing: true
+
+    # Parameters for Encoder and Socket Nodes
+    outbound_topic: "bridge_frame_out"
+    inbound_topic:  "bridge_frame_in"
+    status_topic:   "interface_status"
+
+
+socket1:
   encoder_node:
     ros__parameters:
-      outbound_topic: "bridge_frame_out"
-      inbound_topic:  "bridge_frame_in"
-      status_topic:   "interface_status"
-      use_addressing: true
+      config_file: "config/topics1.yaml"
 
-  transport_node:
+      # If true, the path in config_file is treated as absolute instead of 
+      # relative to the package share directory.
+      # config_file_absolute: true 
+
+  socket_node:
     ros__parameters:
-      network_interface: "network_bridge::UdpInterface"
-      UdpInterface:
-        local_address:  "127.0.0.1"
-        receive_port:   5000
-        remote_address: "127.0.0.1"
-        send_port:      5001
-      outbound_topic: "bridge_frame_out"
-      inbound_topic:  "bridge_frame_in"
-      status_topic:   "interface_status"
-      queue_max:  16
-      window_ms: 100
+      TcpInterface:
+        role: "server" # "client" or "server"
+        port: 5000 # Desired port to listen on
+      
 
-
-udp2:
+socket2:
   encoder_node:
     ros__parameters:
-      outbound_topic: "bridge_frame_out"
-      inbound_topic:  "bridge_frame_in"
-      status_topic:   "interface_status"
-      use_addressing: true
-    
-  transport_node:
+      config_file: "config/topics2.yaml"
+
+  socket_node:
     ros__parameters:
-      network_interface: "network_bridge::UdpInterface"
-      UdpInterface:
-        local_address:  "127.0.0.1"
-        receive_port:   5001
-        remote_address: "127.0.0.1"
-        send_port:      5000
-      outbound_topic: "bridge_frame_out"
-      inbound_topic:  "bridge_frame_in"
-      status_topic:   "interface_status"
-      queue_max:  16
-      window_ms: 100
+      TcpInterface:
+        role: "client" # "client" or "server"
+        remote_address: "127.0.0.1" # IP of the server
+        port: 5000 # Desired port to connect to

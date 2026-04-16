@@ -4,11 +4,11 @@
 **Network Bridge** is a lightweight ROS2 node designed for robust communication between robotic systems over arbitrary network protocols. Supporting UDP and TCP protocols out of the box, this packages seamlessly bridges ROS2 topics across networks, facilitating effective remote communications between a base station and robotic systems, or between multiple robotic systems.
 
 ## Installation
-### Installation via apt
+<!-- ### Installation via apt
 Install with:
 ```
 sudo apt install ros-<distro>-network-bridge
-```
+``` -->
 
 ### Building from Source
 Simply clone the repository into your ROS2 workspace and build with `colcon build`.
@@ -16,23 +16,34 @@ Simply clone the repository into your ROS2 workspace and build with `colcon buil
 ## Usage
 
 ### Demo
-#### TCP
-```
-ros2 launch network_bridge tcp.launch.py
-
-ros2 topic pub /tcp1/MyDefaultTopic std_msgs/msg/String "data: 'Hello World'"
-
-ros2 topic echo /tcp2/MyDefaultTopic
-```
-
 #### UDP
 ```
-ros2 launch network_bridge udp.launch.py
+# In first terminal
+ros2 launch network_bridge socket_launch.py
 
-ros2 topic pub /udp1/MyDefaultTopic std_msgs/msg/String "data: 'Hello World'"
+# In second terminal (Could be on another device)
+ros2 launch network_bridge socket_launch.py namespace:=socket2
 
-ros2 topic echo /udp2/MyDefaultTopic
+# In third terminal for publishing topic
+ros2 run network_bridge dummy_publisher.py
+
+ros2 topic echo /vector/out1
 ```
+
+#### TCP
+```
+# In first terminal
+ros2 launch network_bridge socket_launch.py params_file:=/path/to/pkg/config/tcp.yaml
+
+# In second terminal (Could be on another device)
+ros2 launch network_bridge socket_launch.py namespace:=socket2 params_file:=/path/to/pkg/config/tcp.yaml
+
+# In third terminal for publishing topic
+ros2 run network_bridge dummy_publisher.py
+
+ros2 topic echo /vector/out1
+```
+
 ### Configuration
 Simply setup the network interface parameters and list your desired topics to get started.  If you are using UDP over cellular data, it is recommended to setup a VPN to facilitate connection.  Also, please note that **no encryption** occurs within this package.  Currently, if you would like encryption, you must use a VPN.
 
@@ -62,6 +73,15 @@ The following configuration examples demonstrate a robot sending a message on `/
       remote_address: "192.168.1.2"
       send_port: 5001
 ```
+#### Addressing
+When `use_addressing: true` is set, each node is assigned a `node_addr` in its topics yaml (e.g. `node_addr: 1`). Every outbound frame is stamped with the sender's address, and the receiver filters frames by `dst_addr`.
+
+For RX topic entries, `src_addr` controls which sender's frames are accepted:
+- **Omitted or `src_addr: 0`** — accepts frames from *any* source (wildcard). This is the default and works for most setups.
+- **`src_addr: 0x01`** — only accepts frames originating from the node with `node_addr: 1`.
+
+> **Note:** A common mistake is setting `src_addr` on an RX entry to a non-zero value when the sending node has a different `node_addr`, which silently drops all frames. When in doubt, leave `src_addr` unset.
+
 #### Special case: TF
 The TF topic `/tf` or `/tf_static` are handled as a special cases. The subscriber side will listen to all TF messages, accumulate them
 (similarly to a TF buffer) and send all of them at the specified rate. The behavior can be disabled or forced using the `is_tf` configuration.
