@@ -44,6 +44,34 @@ ros2 run network_bridge dummy_publisher.py
 ros2 topic echo /vector/out1
 ```
 
+#### Bluetooth
+```
+# On the server device (waits for incoming connection)
+ros2 launch network_bridge bluetooth_launch.py
+
+# On the client device — set bt_role: "client" and bt_mac_address in config/bluetooth.yaml
+ros2 launch network_bridge bluetooth_launch.py namespace:=bt2
+
+# Publish a topic and verify it bridges across
+ros2 run network_bridge dummy_publisher.py
+
+ros2 topic echo /vector/out1
+```
+
+#### Radio (XBee)
+```
+# On the robot
+ros2 launch network_bridge radio_launch.py
+
+# On the base station (update xbee_port and xbee_dest_address in config/radio.yaml)
+ros2 launch network_bridge radio_launch.py namespace:=radio2
+
+# Publish a topic and verify it bridges across
+ros2 run network_bridge dummy_publisher.py
+
+ros2 topic echo /vector/out1
+```
+
 ### Configuration
 Simply setup the network interface parameters and list your desired topics to get started.  If you are using UDP over cellular data, it is recommended to setup a VPN to facilitate connection.  Also, please note that **no encryption** occurs within this package.  Currently, if you would like encryption, you must use a VPN.
 

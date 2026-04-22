@@ -1,0 +1,48 @@
+/**:
+  ros__parameters:
+    ## Parameters for both transport nodes
+    # Maximum number of frames to queue for sending when the connection is down.
+    queue_max: 32
+    # Time window in milliseconds for statistics accounting.
+    window_ms: 100
+
+    ## Parameters for all encoder nodes
+    use_addressing: false
+
+    ## Parameters for all encoder and transport nodes
+    outbound_topic: "bridge_frame_out"
+    inbound_topic:  "bridge_frame_in"
+    status_topic:   "interface_status"
+    throughput_alpha: 0.05
+
+radio1:
+  encoder_node:
+    ros__parameters:
+      config_file: "config/topics1.yaml"
+
+      # If true, the path in config_file is treated as absolute instead of
+      # relative to the package share directory.
+      # config_file_absolute: true
+
+  radio_transport_node:
+    ros__parameters:
+      # Serial port the XBee radio is connected to.
+      xbee_port: "/dev/ttyUSB0"
+      xbee_baud: 9600
+
+      # 64-bit destination address in hex. Leave empty for broadcast.
+      # Example: "0013A20041234567"
+      xbee_dest_address: "0013A20042604F6A"
+
+radio2:
+  encoder_node:
+    ros__parameters:
+      config_file: "config/topics2.yaml"
+
+  radio_transport_node:
+    ros__parameters:
+      xbee_port: "/dev/ttyUSB1"
+      xbee_baud: 9600
+
+      # 64-bit destination address in hex. Leave empty for broadcast.
+      xbee_dest_address: "0013A200423D8EA4"
