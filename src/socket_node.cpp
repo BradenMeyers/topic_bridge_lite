@@ -187,6 +187,7 @@ void SocketNode::send_thread_fn()
     network_interface_->write(payload);
     bytes_sent_window_.fetch_add(
       static_cast<uint32_t>(payload.size()), std::memory_order_relaxed);
+    packets_sent_window_.fetch_add(1, std::memory_order_relaxed);
   }
 }
 
@@ -234,7 +235,8 @@ void SocketNode::publish_status()
   msg.seq_gaps_last_window = static_cast<uint8_t>(
     std::min(gaps_window_.exchange(0, std::memory_order_relaxed), 255u));
   msg.medium_state = compute_medium_state();
-  msg.bytes_sent_last_window = bytes_sent_window_.exchange(0, std::memory_order_relaxed);
+  msg.bytes_sent_last_window   = bytes_sent_window_.exchange(0, std::memory_order_relaxed);
+  msg.packets_sent_last_window = packets_sent_window_.exchange(0, std::memory_order_relaxed);
   msg.window_ms = window_ms_;
 
   status_pub_->publish(msg);

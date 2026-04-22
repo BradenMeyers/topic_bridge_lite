@@ -91,6 +91,7 @@ private:
 
   // ── per-window stats (written from multiple threads) ──────────────────────
   std::atomic<uint32_t> bytes_sent_window_{0};
+  std::atomic<uint32_t> packets_sent_window_{0};
   std::atomic<uint8_t> dropped_window_{0};
   std::atomic<uint32_t> gaps_window_{0};
   uint16_t window_ms_{100};

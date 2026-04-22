@@ -26,6 +26,7 @@ SOFTWARE.
 
 #pragma once
 
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -55,7 +56,7 @@ public:
   SubscriptionManager(
     const rclcpp::Node::SharedPtr & node, const std::string & topic,
     const std::string & subscribe_namespace, int zstd_compression_level = 3,
-    bool publish_stale_data = false);
+    bool publish_stale_data = false, int queue_max = 1);
 
   virtual ~SubscriptionManager();
 
@@ -67,8 +68,7 @@ public:
    *
    * @return a const reference to the internal data buffer
    */
-  virtual const std::vector<uint8_t> & get_data(bool & is_valid);
-
+  virtual std::vector<uint8_t> get_data(bool & is_valid);
   /**
    * @brief Check if data is available
    *
@@ -103,8 +103,8 @@ public:
     const std::string & topic,
     const std::string & msg_type, const rclcpp::QoS & qos);
 
-
-  virtual bool is_stale() const;
+  void trim_to(size_t max);
+  size_t queue_size() const {return data_queue_.size();}
 
   /**
    * @brief Callback function for handling serialized messages.
@@ -153,20 +153,13 @@ protected:
   /**
    * @brief Flag indicating whether the data is stale (already accessed via get_data()).
    */
-  bool is_stale_;
-
-  /**
-   * @brief Flag indicating whether to publish stale data.
-   */
   bool publish_stale_data_;
 
   /**
    * @brief The ROS2 generalized subscriber object.
    */
+  
+  int queue_max_;
+  std::deque<std::vector<uint8_t>> data_queue_;
   rclcpp::GenericSubscription::SharedPtr subscriber;
-
-  /**
-   * @brief The data buffer for the subscription manager.
-   */
-  std::vector<uint8_t> data_;
 };

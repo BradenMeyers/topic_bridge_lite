@@ -73,12 +73,6 @@ public:
   void check_subscription() override;
 
   /**
-   * @brief Check if the subscriber data is stale, but returns always false for static_tf
-   *
-   */
-  bool is_stale() const override;
-
-  /**
    * @brief Store the vector of tf name include pattern, and convert them to std::regex
    *
    * Note: a transform is matched if either the frame_id or the child_frame_id match the regex.

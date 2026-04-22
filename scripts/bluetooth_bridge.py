@@ -71,6 +71,7 @@ class BluetoothTransportNode(Node):
         self._dropped_window = 0
         self._gaps_window = 0
         self._bytes_sent_window = 0
+        self._packets_sent_window = 0
         self._stats_lock = threading.Lock()
 
         self._last_seq: dict = {}
@@ -141,6 +142,7 @@ class BluetoothTransportNode(Node):
             self._bt.write(payload)
             with self._stats_lock:
                 self._bytes_sent_window += len(payload)
+                self._packets_sent_window += 1
 
     def _on_bt_receive(self, data: bytes) -> None:
         if not rclpy.ok() or not data:
@@ -177,16 +179,19 @@ class BluetoothTransportNode(Node):
             self._gaps_window = 0
             bytes_sent = self._bytes_sent_window
             self._bytes_sent_window = 0
+            packets_sent = self._packets_sent_window
+            self._packets_sent_window = 0
 
         msg = InterfaceStatus()
-        msg.header.stamp         = self.get_clock().now().to_msg()
-        msg.queue_depth          = min(depth, 255)
-        msg.queue_max            = min(self._q_max, 255)
-        msg.dropped_last_window  = min(dropped, 255)
-        msg.seq_gaps_last_window = min(gaps, 255)
-        msg.medium_state         = self._compute_medium_state()
-        msg.bytes_sent_last_window = min(bytes_sent, 2**32 - 1)
-        msg.window_ms            = min(self._win_ms, 65535)
+        msg.header.stamp              = self.get_clock().now().to_msg()
+        msg.queue_depth               = min(depth, 255)
+        msg.queue_max                 = min(self._q_max, 255)
+        msg.dropped_last_window       = min(dropped, 255)
+        msg.seq_gaps_last_window      = min(gaps, 255)
+        msg.medium_state              = self._compute_medium_state()
+        msg.bytes_sent_last_window    = min(bytes_sent, 2**32 - 1)
+        msg.packets_sent_last_window  = min(packets_sent, 2**32 - 1)
+        msg.window_ms                 = min(self._win_ms, 65535)
         self._status_pub.publish(msg)
 
     def destroy_node(self) -> None:

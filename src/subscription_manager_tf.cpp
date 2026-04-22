@@ -32,7 +32,8 @@ SubscriptionManagerTF::SubscriptionManagerTF(
   const rclcpp::Node::SharedPtr & node, const std::string & topic,
   const std::string & subscribe_namespace, int zstd_compression_level,
   bool publish_stale_data, bool static_tf)
-: SubscriptionManager(node, topic, subscribe_namespace, zstd_compression_level, publish_stale_data),
+: SubscriptionManager(node, topic, subscribe_namespace, zstd_compression_level,
+    static_tf ? true : publish_stale_data, 1),
   static_tf_(static_tf)
 {
 }
@@ -75,14 +76,6 @@ void SubscriptionManagerTF::create_subscription(
       node_->get_logger(),
       "Created generic TF subscriber for topic %s", topic.c_str());
   }
-}
-
-bool SubscriptionManagerTF::is_stale() const
-{
-  if (static_tf_) {
-    return false;
-  }
-  return SubscriptionManager::is_stale();
 }
 
 void SubscriptionManagerTF::set_include_pattern(const std::vector<std::string> & pattern)

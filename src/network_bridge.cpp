@@ -28,6 +28,7 @@ void EncoderNode::shutdown()
   tx_queues_.clear();
   rx_registry_.clear();
   bridge_frame_pub_.reset();
+  bridge_status_pub_.reset();
   inbound_sub_.reset();
   status_sub_.reset();
 }
@@ -37,6 +38,8 @@ void EncoderNode::load_parameters()
   this->declare_parameter("outbound_topic", outbound_topic_);
   this->declare_parameter("inbound_topic", inbound_topic_);
   this->declare_parameter("status_topic", status_topic_);
+  this->declare_parameter("bridge_status_topic", bridge_status_topic_);
+  this->declare_parameter("throughput_alpha", throughput_alpha_);
   this->declare_parameter("config_file", std::string(""));
   this->declare_parameter("config_file_absolute", false);
   this->declare_parameter("use_addressing", false);
@@ -44,6 +47,8 @@ void EncoderNode::load_parameters()
   this->get_parameter("outbound_topic", outbound_topic_);
   this->get_parameter("inbound_topic", inbound_topic_);
   this->get_parameter("status_topic", status_topic_);
+  this->get_parameter("bridge_status_topic", bridge_status_topic_);
+  this->get_parameter("throughput_alpha", throughput_alpha_);
   this->get_parameter("use_addressing", use_addressing_);
 
   std::string config_file;
@@ -58,6 +63,8 @@ void EncoderNode::load_parameters()
 
   bridge_frame_pub_ =
     this->create_publisher<network_bridge::msg::BridgeFrame>(outbound_topic_, 10);
+  bridge_status_pub_ =
+    this->create_publisher<network_bridge::msg::BridgeStatus>(bridge_status_topic_, 10);
 
   inbound_sub_ = this->create_subscription<network_bridge::msg::BridgeFrame>(
     inbound_topic_, 20,
@@ -172,7 +179,7 @@ void EncoderNode::load_topic_config(const std::string & path)
         } else {
           mgr = std::make_shared<SubscriptionManager>(
             shared_from_this(), cfg.input, "",
-            cfg.zstd_level, cfg.publish_stale_data);
+            cfg.zstd_level, cfg.publish_stale_data, cfg.queue_max);
           mgr->setup_subscription();
         }
 
@@ -217,45 +224,31 @@ void EncoderNode::encode_and_publish(network_bridge::TxQueue & tq)
 {
   tq.sub_mgr->check_subscription();
 
-  if (tq.sub_mgr->has_data()) {
-    bool is_valid = false;
-    const std::vector<uint8_t> & raw = tq.sub_mgr->get_data(is_valid);
+  if (!tq.sub_mgr->has_data()) {return;}
 
-    if (is_valid && !raw.empty()) {
-      std::vector<uint8_t> compressed;
-      try {
-        compress(raw, compressed, tq.config.zstd_level);
-      } catch (const std::exception & e) {
-        RCLCPP_ERROR(this->get_logger(), "Compression failed: %s", e.what());
-        return;
-      }
+  bool is_valid = false;
+  std::vector<uint8_t> raw = tq.sub_mgr->get_data(is_valid);
 
-      if (tq.queue.size() >= static_cast<size_t>(tq.config.queue_max)) {
-        if (tq.config.drop_policy == network_bridge::DropPolicy::FIFO) {
-          tq.queue.pop_front();
-        } else {
-          RCLCPP_DEBUG(
-            this->get_logger(), "Queue full, dropping latest for %s",
-            tq.config.input.c_str());
-          return;
-        }
-      }
-      tq.queue.push_back(std::move(compressed));
-    }
-  }
+  if (!is_valid || raw.empty()) {return;}
 
-  if (tq.queue.empty()) {return;}
+  bytes_offered_window_ += static_cast<uint32_t>(raw.size());
 
-  if (tq.config.priority < min_publishable_priority()) {
-    RCLCPP_DEBUG(
-      this->get_logger(), "Priority gate closed for %s (medium_state=%u)",
-      tq.config.input.c_str(), medium_state_);
+  if (window_bytes_used_ >= window_bytes_budget_) {
+    frames_skipped_window_++;
     return;
   }
 
-  const std::vector<uint8_t> & compressed = tq.queue.front();
+  std::vector<uint8_t> compressed;
+  try {
+    compress(raw, compressed, tq.config.zstd_level);
+  } catch (const std::exception & e) {
+    RCLCPP_ERROR(this->get_logger(), "Compression failed: %s", e.what());
+    return;
+  }
 
-  // Build the complete wire packet. Transport calls write(payload) unchanged.
+  window_bytes_used_ += static_cast<uint32_t>(compressed.size());
+  frames_encoded_window_++;
+
   std::vector<uint8_t> wire;
   wire.reserve((use_addressing_ ? 2 : 0) + 2 + compressed.size());
   if (use_addressing_) {
@@ -265,7 +258,6 @@ void EncoderNode::encode_and_publish(network_bridge::TxQueue & tq)
   wire.push_back(tq.config.id);
   wire.push_back(sequence_);
   wire.insert(wire.end(), compressed.begin(), compressed.end());
-  tq.queue.pop_front();
 
   network_bridge::msg::BridgeFrame frame;
   frame.dst_addr = use_addressing_ ? tq.config.dst_addr : 0;
@@ -353,6 +345,66 @@ void EncoderNode::on_interface_status(
   const network_bridge::msg::InterfaceStatus::SharedPtr msg)
 {
   medium_state_ = msg->medium_state;
+
+  bool active_window = msg->bytes_sent_last_window > 0 || msg->queue_depth > 0;
+  if (msg->window_ms > 0 && active_window) {
+    float sample_bps =
+      static_cast<float>(msg->bytes_sent_last_window) * 8000.0f /
+      static_cast<float>(msg->window_ms);
+    estimated_bps_ = (estimated_bps_ == 0.0f && sample_bps > 0.0f)
+      ? sample_bps
+      : throughput_alpha_ * sample_bps + (1.0f - throughput_alpha_) * estimated_bps_;
+  }
+
+  float win_sec = static_cast<float>(msg->window_ms) / 1000.0f;
+  uint32_t in  = frames_encoded_window_;
+  uint32_t out = msg->packets_sent_last_window;
+  uint32_t skipped = frames_skipped_window_;
+  uint32_t dropped = msg->dropped_last_window;
+  uint32_t total_attempted = in + skipped;
+
+  network_bridge::msg::BridgeStatus bs;
+  bs.header.stamp           = msg->header.stamp;
+  bs.window_ms              = msg->window_ms;
+  bs.estimated_throughput_bps = estimated_bps_;
+  bs.output_bps             = (win_sec > 0.0f)
+    ? static_cast<float>(msg->bytes_sent_last_window) * 8.0f / win_sec : 0.0f;
+  bs.input_bps              = (win_sec > 0.0f)
+    ? static_cast<float>(bytes_offered_window_) * 8.0f / win_sec : 0.0f;
+  bs.packets_in_last_window      = in;
+  bs.packets_out_last_window     = out;
+  bs.packets_skipped_last_window = skipped;
+  bs.packets_dropped_last_window = dropped;
+  bs.packet_loss_rate       = (total_attempted > 0)
+    ? static_cast<float>(skipped + dropped) / static_cast<float>(total_attempted) : 0.0f;
+  bs.queue_depth   = msg->queue_depth;
+  bs.queue_max     = msg->queue_max;
+  bs.medium_state  = msg->medium_state;
+  bridge_status_pub_->publish(bs);
+
+  frames_encoded_window_ = 0;
+  frames_skipped_window_ = 0;
+  bytes_offered_window_  = 0;
+  window_bytes_used_ = 0;
+  if (estimated_bps_ > 0.0f && msg->window_ms > 0) {
+    window_bytes_budget_ = static_cast<uint32_t>(
+      estimated_bps_ * static_cast<float>(msg->window_ms) / 8000.0f);
+  } else {
+    window_bytes_budget_ = UINT32_MAX;
+  }
+
+  if (msg->queue_max == 0) {return;}
+  float fill = static_cast<float>(msg->queue_depth) / static_cast<float>(msg->queue_max);
+
+  if (fill >= 0.8f) {
+    for (auto & tq : tx_queues_) {
+      tq.sub_mgr->trim_to(1);
+    }
+  } else if (fill >= 0.5f) {
+    for (auto & tq : tx_queues_) {
+      tq.sub_mgr->trim_to(std::max(size_t(1), tq.sub_mgr->queue_size() / 2));
+    }
+  }
 }
 
 void EncoderNode::compress(
@@ -379,17 +431,6 @@ void EncoderNode::decompress(std::span<const uint8_t> data, std::vector<uint8_t>
   if (ZSTD_isError(result)) {throw std::runtime_error(ZSTD_getErrorName(result));}
 }
 
-network_bridge::Priority EncoderNode::min_publishable_priority() const
-{
-  // TODO look at this to see if this is what i actually want to do. Maybe start dropping queues. 
-  switch (medium_state_) {
-    case 1: return network_bridge::Priority::LOW;
-    case 2: return network_bridge::Priority::MEDIUM;
-    case 0:
-    case 3:
-    default: return network_bridge::Priority::HIGH;
-  }
-}
 
 int main(int argc, char ** argv)
 {

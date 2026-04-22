@@ -27,6 +27,7 @@ find_package(ament_index_cpp REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/BridgeFrame.msg"
   "msg/InterfaceStatus.msg"
+  "msg/BridgeStatus.msg"
   DEPENDENCIES std_msgs
 )
 

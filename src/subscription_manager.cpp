@@ -30,25 +30,23 @@ SOFTWARE.
 SubscriptionManager::SubscriptionManager(
   const rclcpp::Node::SharedPtr & node, const std::string & topic,
   const std::string & subscribe_namespace, int zstd_compression_level,
-  bool publish_stale_data)
+  bool publish_stale_data, int queue_max)
 : node_(node),
   msg_type_(),
   topic_(topic),
   subscribe_namespace_(subscribe_namespace),
   zstd_compression_level_(zstd_compression_level),
+  topic_found_(true),
   received_msg_(false),
-  is_stale_(true),
   publish_stale_data_(publish_stale_data),
-  data_()
-{
-  topic_found_ = true;   // optimistic
-}
+  queue_max_(queue_max)
+{}
 
 SubscriptionManager::~SubscriptionManager() {}
 
 void SubscriptionManager::setup_subscription()
 {
-  if (!rclcpp::ok()) {return;} // Querying graph is fragile
+  if (!rclcpp::ok()) {return;}
 
   const auto all_topics_and_types = node_->get_topic_names_and_types();
 
@@ -125,10 +123,13 @@ void SubscriptionManager::callback(
     node_->get_logger(),
     "Received message on topic %s", topic_.c_str());
   received_msg_ = true;
-  is_stale_ = false;
-  data_.resize(serialized_msg->size());
+  std::vector<uint8_t> data(serialized_msg->size());
   auto buff = serialized_msg->get_rcl_serialized_message().buffer;
-  std::copy(buff, buff + serialized_msg->size(), data_.begin());
+  std::copy(buff, buff + serialized_msg->size(), data.begin());
+  data_queue_.push_back(std::move(data));
+  while (static_cast<int>(data_queue_.size()) > queue_max_) {
+    data_queue_.pop_front();
+  }
 }
 
 void SubscriptionManager::check_subscription()
@@ -138,39 +139,35 @@ void SubscriptionManager::check_subscription()
   }
 }
 
-
 bool SubscriptionManager::has_data() const
 {
-  if (!received_msg_) {
-    return false;
-  }
-  if (this->is_stale() && !publish_stale_data_) {
-    return false;
-  }
-  return true;
+  return received_msg_ && !data_queue_.empty();
 }
 
-bool SubscriptionManager::is_stale() const
-{
-  return is_stale_;
-}
-
-const std::vector<uint8_t> & SubscriptionManager::get_data(bool & is_valid)
+std::vector<uint8_t> SubscriptionManager::get_data(bool & is_valid)
 {
   is_valid = false;
 
   if (!received_msg_) {
     RCLCPP_WARN(node_->get_logger(), "Send Timer: No message ever received");
-    return data_;
+    return {};
   }
 
-
-  if (this->is_stale() && !publish_stale_data_) {
-    RCLCPP_WARN(node_->get_logger(), "Send Timer: Stored data is stale");
-    return data_;
+  if (data_queue_.empty()) {
+    return {};
   }
 
-  is_stale_ = true;
   is_valid = true;
-  return data_;
+  std::vector<uint8_t> data = data_queue_.front();
+  if (!publish_stale_data_) {
+    data_queue_.pop_front();
+  }
+  return data;
+}
+
+void SubscriptionManager::trim_to(size_t max)
+{
+  while (data_queue_.size() > max) {
+    data_queue_.pop_front();
+  }
 }

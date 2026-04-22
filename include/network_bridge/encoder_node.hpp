@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <deque>
 #include <map>
 #include <memory>
 #include <span>
@@ -13,6 +12,7 @@
 
 #include "network_bridge/subscription_manager.hpp"
 #include "network_bridge/msg/bridge_frame.hpp"
+#include "network_bridge/msg/bridge_status.hpp"
 #include "network_bridge/msg/interface_status.hpp"
 
 namespace network_bridge
@@ -46,7 +46,6 @@ struct TxQueue
 {
   TopicConfig config;
   std::shared_ptr<SubscriptionManager> sub_mgr;
-  std::deque<std::vector<uint8_t>> queue;
 };
 
 struct RxEntry
@@ -79,8 +78,6 @@ protected:
   virtual void decompress(
     std::span<const uint8_t> data, std::vector<uint8_t> & out);
 
-  network_bridge::Priority min_publishable_priority() const;
-
   std::vector<network_bridge::TxQueue> tx_queues_;
 
   // Keyed by (src_addr, topic_id) so the same topic_id can be reused
@@ -90,11 +87,19 @@ protected:
   std::vector<rclcpp::TimerBase::SharedPtr> timers_;
 
   rclcpp::Publisher<network_bridge::msg::BridgeFrame>::SharedPtr bridge_frame_pub_;
+  rclcpp::Publisher<network_bridge::msg::BridgeStatus>::SharedPtr bridge_status_pub_;
   rclcpp::Subscription<network_bridge::msg::BridgeFrame>::SharedPtr inbound_sub_;
   rclcpp::Subscription<network_bridge::msg::InterfaceStatus>::SharedPtr status_sub_;
 
   uint8_t sequence_{0};
   uint8_t medium_state_{1};
+  float estimated_bps_{0.0f};
+  float throughput_alpha_{0.1f};
+  uint32_t window_bytes_budget_{UINT32_MAX};
+  uint32_t window_bytes_used_{0};
+  uint32_t frames_encoded_window_{0};
+  uint32_t frames_skipped_window_{0};
+  uint32_t bytes_offered_window_{0};
 
   bool use_addressing_{false};
   uint8_t src_addr_{0x00};   // this node's own address on the link
@@ -102,4 +107,5 @@ protected:
   std::string outbound_topic_{"bridge_frame_out"};
   std::string inbound_topic_{"bridge_frame_in"};
   std::string status_topic_{"interface_status"};
+  std::string bridge_status_topic_{"bridge_status"};
 };

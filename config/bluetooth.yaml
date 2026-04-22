@@ -15,6 +15,7 @@
     outbound_topic: "bridge_frame_out"
     inbound_topic:  "bridge_frame_in"
     status_topic:   "interface_status"
+    throughput_alpha: 0.05
 
 bt1:
   encoder_node:
