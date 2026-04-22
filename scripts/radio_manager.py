@@ -15,7 +15,7 @@ from network_interface_base import NetworkInterface
 
 try:
     from digi.xbee.devices import XBeeDevice, RemoteXBeeDevice, XBee64BitAddress
-    from digi.xbee.exception import TransmitException
+    from digi.xbee.exception import TransmitException, TimeoutException
     _XBEE_AVAILABLE = True
 except ImportError:
     _XBEE_AVAILABLE = False
@@ -76,12 +76,12 @@ class XBeeRadioDevice(NetworkInterface):
             else:
                 self._device.send_data_broadcast(data)
             return True
-        except TransmitException as exc:
+        except (TransmitException, TimeoutException) as exc:
             if self._dest_address:
-                self._log.error(f"XBee TransmitException (unicast to {self._dest_address}): {exc}")
+                self._log.error(f"XBee send error (unicast to {self._dest_address}): {exc}")
                 return False
             # Broadcast with no receivers in range is not a real failure.
-            self._log.debug(f"XBee broadcast TransmitException (no receivers): {exc}")
+            self._log.debug(f"XBee broadcast send error (no receivers): {exc}")
             return True
         except Exception as exc:
             self._log.error(f"XBee send error: {exc}")
