@@ -41,13 +41,13 @@ class ModemTransportNode(Node):
         self.declare_parameter("status_topic", "interface_status")
         self.declare_parameter("window_ms", 100)
 
-        outbound = self.get_parameter("outbound_topic").value
-        inbound = self.get_parameter("inbound_topic").value
-        modem_send_topic = self.get_parameter("modem_send_topic").value
-        modem_rec_topic = self.get_parameter("modem_rec_topic").value
-        modem_cmd_update_topic = self.get_parameter("modem_cmd_update_topic").value
-        status_topic = self.get_parameter("status_topic").value
-        self._win_ms = self.get_parameter("window_ms").value
+        outbound = self.get_parameter("outbound_topic").get_parameter_value().string_value
+        inbound = self.get_parameter("inbound_topic").get_parameter_value().string_value
+        modem_send_topic = self.get_parameter("modem_send_topic").get_parameter_value().string_value
+        modem_rec_topic = self.get_parameter("modem_rec_topic").get_parameter_value().string_value
+        modem_cmd_update_topic = self.get_parameter("modem_cmd_update_topic").get_parameter_value().string_value
+        status_topic = self.get_parameter("status_topic").get_parameter_value().string_value
+        self._win_ms = self.get_parameter("window_ms").get_parameter_value().integer_value
 
         self._queue_depth = 0
         self._last_seq: dict[int, int] = {}
