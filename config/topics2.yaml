@@ -1,4 +1,3 @@
-node_addr: 2
 topics:
   # Example: send /vector to the remote and receive it back on /vector/bt
   - input:    /vector

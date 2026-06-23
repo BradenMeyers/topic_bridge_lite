@@ -1,4 +1,3 @@
-node_addr: 1
 topics:
   # Send /vector from udp1 side to udp2 side, republish as /vector/forwarded/a
   - input:    /vector     # Topic to subscribe to on the local ROS2 side
