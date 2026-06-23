@@ -1,0 +1,18 @@
+/**:
+  ros__parameters:
+    ## Parameters for both transport nodes
+    # Maximum number of frames to queue for sending when the connection is down.
+    queue_max: 32
+    # Time window in milliseconds for statistics accounting.
+    window_ms: 100
+
+    ## Parameters for all encoder nodes
+    use_addressing: false
+
+    ## Parameters for all encoder and transport nodes
+    outbound_topic: "bridge_frame_out"
+    inbound_topic:  "bridge_frame_in"
+    status_topic:   "interface_status"
+    throughput_alpha: 0.05
+    config_file: "config/topics3.yaml"
+    node_address: 1

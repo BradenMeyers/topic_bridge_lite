@@ -1,0 +1,10 @@
+topics:
+  # Example: send /vector to the remote and receive it back on /vector/bt
+  - input:    /float/in
+    output:   /float/out
+    type:     std_msgs/msg/Float32
+    id:       0
+    mode:     duplex
+    rate:     20.0
+    # priority: high
+    # queue_max: 4
