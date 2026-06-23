@@ -61,6 +61,7 @@ void EncoderNode::load_parameters()
       "/" + config_file;
   }
 
+  // TODO change to outbound pub 
   bridge_frame_pub_ =
     this->create_publisher<network_bridge::msg::BridgeFrame>(outbound_topic_, 10);
   bridge_status_pub_ =
@@ -77,12 +78,12 @@ void EncoderNode::load_parameters()
     [this](const network_bridge::msg::InterfaceStatus::SharedPtr msg) {
       on_interface_status(msg);
     });
-    
+
     if (config_file.empty()) {
       RCLCPP_WARN(this->get_logger(), "No config_file set — no topics will be bridged");
       return;
     }
-    
+
     load_topic_config(config_file);
 
     RCLCPP_INFO(
@@ -278,7 +279,7 @@ void EncoderNode::on_inbound_frame(const network_bridge::msg::BridgeFrame::Share
 
   size_t offset = 0;
   uint8_t src_addr = 0x00;
-  // TODO maybe we always force addressing but the lower layer can 
+  // TODO maybe we always force addressing but the lower layer can
   // pull off the header and add it back on on the other side
   if (use_addressing_) {
     uint8_t dst_addr = msg->payload[0];
