@@ -43,6 +43,7 @@ void EncoderNode::load_parameters()
   this->declare_parameter("config_file", std::string(""));
   this->declare_parameter("config_file_absolute", false);
   this->declare_parameter("use_addressing", false);
+  this->declare_parameter("node_address", 0);
 
   this->get_parameter("outbound_topic", outbound_topic_);
   this->get_parameter("inbound_topic", inbound_topic_);
@@ -50,6 +51,7 @@ void EncoderNode::load_parameters()
   this->get_parameter("bridge_status_topic", bridge_status_topic_);
   this->get_parameter("throughput_alpha", throughput_alpha_);
   this->get_parameter("use_addressing", use_addressing_);
+  this->get_parameter("node_address", src_addr_);
 
   std::string config_file;
   bool config_file_absolute;
@@ -61,7 +63,7 @@ void EncoderNode::load_parameters()
       "/" + config_file;
   }
 
-  // TODO change to outbound pub 
+  // TODO change to outbound pub
   bridge_frame_pub_ =
     this->create_publisher<network_bridge::msg::BridgeFrame>(outbound_topic_, 10);
   bridge_status_pub_ =
@@ -103,7 +105,6 @@ void EncoderNode::load_topic_config(const std::string & path)
       this->get_logger(), "Failed to load config_file '%s': %s", path.c_str(), e.what());
     return;
   }
-  src_addr_ = root["node_addr"].as<uint8_t>(0);
 
   auto topics_node = root["topics"];
   if (!topics_node || !topics_node.IsSequence()) {
