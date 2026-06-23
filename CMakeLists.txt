@@ -127,6 +127,7 @@ install(PROGRAMS
   scripts/bluetooth_bridge.py
   scripts/radio_manager.py
   scripts/radio_bridge.py
+  scripts/modem_bridge.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
